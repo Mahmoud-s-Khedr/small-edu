@@ -15,7 +15,7 @@ async function verifiedProviderSubject(_token: string, _env: Env): Promise<strin
 }
 
 async function resolveUser(token: string, env: Env): Promise<AuthUser | null> {
-  const devAuthEnabled: string = env.DEV_AUTH_ENABLED;
+  const devAuthEnabled = env.DEV_AUTH_ENABLED;
   if (devAuthEnabled === 'true' && token.startsWith('dev:')) {
     const user = await db(env.DB).query.users.findFirst({ where: eq(users.id, token.slice(4)) });
     return user ? { id: user.id, email: user.email, name: user.name, role: user.role } : null;
