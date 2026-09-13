@@ -5,3 +5,4 @@ dev.vars
 coverage/
 worker-configuration.d.ts
 *.cpuprofile
+keys.txt
