@@ -2,6 +2,9 @@ node_modules/
 .wrangler/
 .dev.vars
 dev.vars
+.env
+test-client/.env
+test-client/dist/
 coverage/
 worker-configuration.d.ts
 *.cpuprofile

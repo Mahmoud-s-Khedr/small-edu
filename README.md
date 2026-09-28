@@ -64,6 +64,7 @@ After any Firebase login, call `POST /api/v1/auth/session` once with `getIdToken
 5. Local development uses the same Firebase ID-token authentication flow as deployed environments.
 
 The complete provider configuration, client contract, account-linking rules, and release checklist are in [docs/authentication.md](docs/authentication.md).
+A disposable browser utility for testing the real Firebase-to-Worker flow is available in [test-client/](test-client/README.md); it is not a production frontend.
 
 ## Common API calls
 

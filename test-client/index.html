@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Medly Firebase API test client</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Development utility</p>
+        <h1>Medly Firebase API test client</h1>
+        <p>Tests Firebase email/password authentication and the deployed Medly Worker. This is not an application UI.</p>
+      </header>
+
+      <section aria-labelledby="config-heading">
+        <h2 id="config-heading">API target</h2>
+        <label>
+          Worker API base URL
+          <input id="api-base-url" type="url" spellcheck="false" />
+        </label>
+        <p class="hint">For this local client, add <code>http://localhost:5173</code> to the deployed Worker’s <code>CORS_ORIGINS</code>, then deploy the Worker.</p>
+      </section>
+
+      <section aria-labelledby="identity-heading">
+        <h2 id="identity-heading">Firebase identity</h2>
+        <div class="form-grid">
+          <label>
+            Email
+            <input id="email" type="email" autocomplete="email" placeholder="tester@example.com" required />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" autocomplete="current-password" minlength="6" required />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="create-account" type="button">Create account and send verification</button>
+          <button id="sign-in" type="button">Sign in</button>
+          <button id="refresh-verification" type="button">Refresh verification status</button>
+          <button id="sign-out" class="secondary" type="button">Sign out</button>
+        </div>
+        <p id="identity-state" class="state">No Firebase user is signed in.</p>
+      </section>
+
+      <section aria-labelledby="api-heading">
+        <h2 id="api-heading">Worker API</h2>
+        <p>Verify the email address first. The Worker intentionally rejects unverified Firebase tokens.</p>
+        <div class="actions">
+          <button id="provision-session" type="button">Provision API session</button>
+          <button id="get-me" type="button">Call GET /me</button>
+          <button id="get-modules" type="button">Call GET /modules</button>
+          <button id="show-token" class="secondary" type="button">Show token metadata</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="output-heading">
+        <h2 id="output-heading">Result</h2>
+        <pre id="output" aria-live="polite">Ready.</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
