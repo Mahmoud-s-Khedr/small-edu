@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { bookingRequests, modules } from '../db/schema';
@@ -32,7 +32,7 @@ export async function cleanupExpiredUnsubmittedReceipts(env: Env): Promise<void>
   } while (cursor);
 }
 
-export const bookingRoutes = new Hono<AppBindings>();
+export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
 
 bookingRoutes.post('/receipt', async (c) => {
@@ -83,7 +83,7 @@ bookingRoutes.get('/', async (c) => {
   return c.json({ data: items.map(({ receiptKey: _receiptKey, ...item }) => item) });
 });
 
-export const adminBookingRoutes = new Hono<AppBindings>();
+export const adminBookingRoutes = new ApiRouter<AppBindings>('/admin/bookings');
 adminBookingRoutes.use('*', requireAuth, requireAdmin);
 adminBookingRoutes.get('/', async (c) => {
   const query = paginationQuery.extend({ status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']).optional() }).parse(c.req.query());

@@ -16,6 +16,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@hono/swagger-ui": "^0.6.1",
+    "@hono/zod-openapi": "^1.6.3",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",
     "jose": "^6.2.12",

@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { users } from '../db/schema';
@@ -12,7 +12,7 @@ const userIdParam = z.object({ userId: z.string().uuid() });
 // only grant or revoke the operational ADMIN role.
 const roleInput = z.object({ role: z.enum(['USER', 'ADMIN']) });
 
-export const adminUserRoutes = new Hono<AppBindings>();
+export const adminUserRoutes = new ApiRouter<AppBindings>('/admin/users');
 adminUserRoutes.use('*', requireAuth, requireSuperAdmin);
 
 adminUserRoutes.get('/', async (c) => {

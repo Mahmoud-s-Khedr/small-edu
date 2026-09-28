@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
 import { users } from '../db/schema';
 import { conflict, unauthorized } from '../lib/errors';
@@ -16,7 +16,7 @@ const asAuthUser = (user: typeof users.$inferSelect): AuthUser => ({
 const fallbackName = (email: string): string => email.split('@', 1)[0] || email;
 
 /** Provision a local account only after a verified Firebase ID token. */
-export const authRoutes = new Hono<AppBindings>();
+export const authRoutes = new ApiRouter<AppBindings>('/auth');
 
 authRoutes.post('/session', async (c) => {
   const value = c.req.header('Authorization');

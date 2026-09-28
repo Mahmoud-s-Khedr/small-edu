@@ -1,5 +1,5 @@
 import { and, asc, count, eq, or, sql } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
 import { flashcards, lectures, userFlashcardState } from '../db/schema';
 import { badRequest, notFound } from '../lib/errors';
@@ -46,7 +46,7 @@ async function deleteUnreferencedImages(database: ReturnType<typeof db>, bucket:
   await deletePrivateObjects(bucket, candidates.filter((key) => !referenced.has(key)));
 }
 
-export const flashcardRoutes = new Hono<AppBindings>();
+export const flashcardRoutes = new ApiRouter<AppBindings>('');
 flashcardRoutes.use('*', requireAuth);
 
 flashcardRoutes.get('/lectures/:lectureId/flashcards', async (c) => {

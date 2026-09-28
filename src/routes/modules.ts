@@ -1,5 +1,5 @@
 import { and, count, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { flashcards, lectureMaterials, lectures, modules } from '../db/schema';
@@ -22,7 +22,7 @@ const lectureFilters = paginationQuery.extend({
   to: z.coerce.date().optional(),
 });
 
-export const moduleRoutes = new Hono<AppBindings>();
+export const moduleRoutes = new ApiRouter<AppBindings>('/modules');
 moduleRoutes.use('*', requireAuth);
 
 moduleRoutes.get('/', async (c) => {

@@ -1,5 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { lectures, mcqChoices, mcqs } from '../db/schema';
@@ -20,7 +20,7 @@ async function questionWithChoices(database: ReturnType<typeof db>, id: string) 
   return { question, choices };
 }
 
-export const mcqRoutes = new Hono<AppBindings>();
+export const mcqRoutes = new ApiRouter<AppBindings>('');
 mcqRoutes.use('*', requireAuth);
 
 mcqRoutes.get('/lectures/:lectureId/mcqs', async (c) => {

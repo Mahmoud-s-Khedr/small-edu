@@ -96,6 +96,19 @@ beforeEach(async () => {
 });
 
 describe('Medly API', () => {
+  it('serves generated Swagger documentation without authentication', async () => {
+    const [ui, spec] = await Promise.all([
+      request('/api/v1/docs'),
+      request('/api/v1/openapi'),
+    ]);
+    expect(ui.status).toBe(200);
+    expect(spec.status).toBe(200);
+    const document = await spec.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
+    expect(document.paths).toHaveProperty('/modules');
+    expect(document.paths).toHaveProperty('/lectures/{lectureId}/mcqs');
+    expect(document.components.schemas).toHaveProperty('Module');
+  });
+
   it('serves health without authentication', async () => {
     const response = await request('/api/v1/health', { headers: { Origin: 'https://local-client.example.test' } });
     expect(response.status).toBe(200);

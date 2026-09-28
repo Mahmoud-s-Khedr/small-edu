@@ -1,4 +1,6 @@
-import { z } from 'zod';
+// Keep the request DTOs in the OpenAPI-aware Zod instance. The schemas remain
+// ordinary Zod schemas at runtime, while Swagger can now use them directly.
+import { z } from '@hono/zod-openapi';
 
 export const idParam = z.object({ id: z.string().uuid() });
 export const moduleIdParam = z.object({ moduleId: z.string().uuid() });
