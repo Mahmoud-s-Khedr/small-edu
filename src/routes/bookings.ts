@@ -63,18 +63,36 @@ adminBookingRoutes.get('/', async (c) => {
   return c.json({ data: items.map(({ receiptKey: _receiptKey, ...item }) => item), meta: p });
 });
 
+adminBookingRoutes.get('/:bookingId/receipt', async (c) => {
+  const { bookingId } = bookingIdParam.parse(c.req.param());
+  const booking = await db(c.env.DB).query.bookingRequests.findFirst({ where: eq(bookingRequests.id, bookingId) });
+  if (!booking) throw notFound('Booking request not found');
+  const object = await c.env.STORAGE.get(booking.receiptKey);
+  if (!object || !('body' in object)) throw notFound('Stored receipt not found');
+  const headers = new Headers({
+    'Content-Type': booking.receiptContentType,
+    'Content-Disposition': `attachment; filename="${booking.receiptFilename.replaceAll('"', '')}"`,
+  });
+  object.writeHttpMetadata(headers);
+  return new Response(object.body, { headers });
+});
+
 adminBookingRoutes.patch('/:bookingId', async (c) => {
   const { bookingId } = bookingIdParam.parse(c.req.param());
   const { status } = statusBody.parse(await c.req.json());
   const database = db(c.env.DB);
-  const booking = await database.query.bookingRequests.findFirst({ where: eq(bookingRequests.id, bookingId) });
-  if (!booking) throw notFound('Booking request not found');
-  if (booking.status !== 'PENDING') throw conflict('Only pending booking requests can be decided');
   const updatedAt = new Date();
-  await database.update(bookingRequests).set({ status, updatedAt }).where(and(eq(bookingRequests.id, bookingId), eq(bookingRequests.status, 'PENDING')));
+  const [booking] = await database.update(bookingRequests).set({ status, updatedAt })
+    .where(and(eq(bookingRequests.id, bookingId), eq(bookingRequests.status, 'PENDING')))
+    .returning();
+  if (!booking) {
+    const existing = await database.query.bookingRequests.findFirst({ where: eq(bookingRequests.id, bookingId) });
+    if (!existing) throw notFound('Booking request not found');
+    throw conflict('Only pending booking requests can be decided');
+  }
   if (status === 'ACCEPTED') {
     await database.insert(moduleAccess).values({ userId: booking.userId, moduleId: booking.moduleId, grantedAt: updatedAt }).onConflictDoNothing();
   }
-  const { receiptKey: _receiptKey, ...response } = { ...booking, status, updatedAt };
+  const { receiptKey: _receiptKey, ...response } = booking;
   return c.json({ data: response });
 });

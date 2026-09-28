@@ -1,9 +1,9 @@
-import { and, count, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { lectureMaterials, lectures, modules } from '../db/schema';
-import { requireModuleVideoAccess } from '../lib/access';
+import { lectureMaterials, lectures, moduleAccess, modules } from '../db/schema';
+import { hasModuleVideoAccess, requireModuleVideoAccess } from '../lib/access';
 import { notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureIdParam, lecturePatch } from '../lib/validation';
@@ -40,7 +40,16 @@ lectureRoutes.get('/', async (c) => {
       .where(where).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(lectures).innerJoin(modules, eq(lectures.moduleId, modules.id)).where(where).get(),
   ]);
-  return c.json({ data: items.map(({ lecture, module }) => ({ ...lecture, academicYear: module.academicYear, semester: module.semester })), meta: { ...p, total: totalRow?.total ?? 0 } });
+  const user = c.get('user');
+  const moduleIds = [...new Set(items.map(({ lecture }) => lecture.moduleId))];
+  const accessibleModuleIds = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN'
+    ? new Set(moduleIds)
+    : new Set((moduleIds.length ? await database.select({ moduleId: moduleAccess.moduleId }).from(moduleAccess)
+      .where(and(eq(moduleAccess.userId, user.id), inArray(moduleAccess.moduleId, moduleIds))) : []).map((access) => access.moduleId));
+  return c.json({ data: items.map(({ lecture, module }) => {
+    const canWatch = accessibleModuleIds.has(lecture.moduleId);
+    return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, academicYear: module.academicYear, semester: module.semester };
+  }), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
 lectureRoutes.get('/:lectureId', async (c) => {
@@ -48,10 +57,7 @@ lectureRoutes.get('/:lectureId', async (c) => {
   const row = await db(c.env.DB).select({ lecture: lectures, module: modules }).from(lectures)
     .innerJoin(modules, eq(lectures.moduleId, modules.id)).where(eq(lectures.id, lectureId)).get();
   if (!row) throw notFound('Lecture not found');
-  const user = c.get('user');
-  const canWatch = user.role === 'ADMIN' || !!await db(c.env.DB).query.moduleAccess.findFirst({
-    where: (access, { and, eq }) => and(eq(access.userId, user.id), eq(access.moduleId, row.lecture.moduleId)),
-  });
+  const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), row.lecture.moduleId);
   return c.json({ data: { ...row.lecture, videoUrl: canWatch ? row.lecture.videoUrl : null, videoLocked: !canWatch } });
 });
 

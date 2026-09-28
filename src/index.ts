@@ -1,12 +1,14 @@
 import { cors } from 'hono/cors';
 import { Hono } from 'hono';
 import { adminBookingRoutes, bookingRoutes } from './routes/bookings';
+import { authRoutes } from './routes/auth';
 import { flashcardRoutes } from './routes/flashcards';
 import { healthRoutes } from './routes/health';
 import { lectureRoutes } from './routes/lectures';
 import { mcqRoutes } from './routes/mcqs';
 import { meRoutes } from './routes/me';
 import { moduleRoutes } from './routes/modules';
+import { adminUserRoutes } from './routes/users';
 import { errorHandler } from './middleware/error';
 import type { AppBindings } from './types';
 
@@ -20,6 +22,7 @@ app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not fou
 
 const api = new Hono<AppBindings>();
 api.route('/health', healthRoutes);
+api.route('/auth', authRoutes);
 api.route('/me', meRoutes);
 api.route('/modules', moduleRoutes);
 api.route('/lectures', lectureRoutes);
@@ -27,6 +30,7 @@ api.route('/', flashcardRoutes);
 api.route('/', mcqRoutes);
 api.route('/bookings', bookingRoutes);
 api.route('/admin/bookings', adminBookingRoutes);
+api.route('/admin/users', adminUserRoutes);
 app.route('/api/v1', api);
 
 export default app;

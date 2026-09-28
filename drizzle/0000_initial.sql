@@ -128,7 +128,7 @@ CREATE TABLE `users` (
 	`role` text DEFAULT 'USER' NOT NULL,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL,
-	CONSTRAINT "users_role_check" CHECK("users"."role" IN ('USER', 'ADMIN'))
+	CONSTRAINT "users_role_check" CHECK("users"."role" IN ('USER', 'ADMIN', 'SUPER_ADMIN'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `users_external_subject_unique` ON `users` (`external_subject`);--> statement-breakpoint

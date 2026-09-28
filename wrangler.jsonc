@@ -4,10 +4,6 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": {
-    "ENVIRONMENT": "development",
-    "CORS_ORIGINS": "http://localhost:3000,http://localhost:8081"
-  },
   "d1_databases": [
     {
       "binding": "DB",

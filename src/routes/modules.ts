@@ -6,6 +6,7 @@ import { lectures, modules } from '../db/schema';
 import { notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureInput, lecturePatch, moduleIdParam, moduleInput, modulePatch } from '../lib/validation';
+import { hasModuleVideoAccess } from '../lib/access';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
@@ -84,7 +85,8 @@ moduleRoutes.get('/:moduleId/lectures', async (c) => {
     database.select().from(lectures).where(and(...filters)).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(lectures).where(and(...filters)).get(),
   ]);
-  return c.json({ data: items, meta: { ...p, total: totalRow?.total ?? 0 } });
+  const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), moduleId);
+  return c.json({ data: items.map((lecture) => ({ ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch })), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
 moduleRoutes.post('/:moduleId/lectures', requireAdmin, async (c) => {

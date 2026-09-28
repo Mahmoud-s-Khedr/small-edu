@@ -35,7 +35,7 @@ flashcardRoutes.get('/lectures/:lectureId/flashcards', async (c) => {
   const rows = await database.select({ card: flashcards, state: userFlashcardState }).from(flashcards)
     .leftJoin(userFlashcardState, and(eq(userFlashcardState.flashcardId, flashcards.id), eq(userFlashcardState.userId, user.id)))
     .where(eq(flashcards.lectureId, lectureId)).orderBy(asc(flashcards.ordering));
-  return c.json({ data: rows.filter((row) => user.role === 'ADMIN' || !row.state?.hidden).map((row) => cardResponse(row.card, row.state ?? undefined)) });
+  return c.json({ data: rows.filter((row) => user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || !row.state?.hidden).map((row) => cardResponse(row.card, row.state ?? undefined)) });
 });
 
 flashcardRoutes.post('/lectures/:lectureId/flashcards', requireAdmin, async (c) => {

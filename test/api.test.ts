@@ -1,37 +1,98 @@
 import migration from '../drizzle/0000_initial.sql?raw';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
+import { verifyFirebaseIdToken } from '../src/middleware/auth';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const secondUserId = '22222222-2222-4222-8222-222222222222';
 const adminId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const superAdminId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const moduleId = '33333333-3333-4333-8333-333333333333';
 const lectureId = '44444444-4444-4444-8444-444444444444';
 
-const auth = (id: string) => ({ Authorization: `Bearer dev:${id}` });
+const seedSubjects = new Map([
+  [userId, 'seed-student'],
+  [secondUserId, 'seed-second-student'],
+  [adminId, 'seed-admin'],
+  [superAdminId, 'seed-super-admin'],
+]);
+let authTokens = new Map<string, string>();
+
+const auth = (id: string) => {
+  const token = authTokens.get(id);
+  if (!token) throw new Error(`Missing Firebase test token for user ${id}`);
+  return { Authorization: `Bearer ${token}` };
+};
 const request = (path: string, init: RequestInit = {}) => SELF.fetch(`https://medly.test${path}`, init);
 const json = (path: string, method: string, body: unknown, user = adminId) => request(path, {
   method, headers: { ...auth(user), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
+const firebaseProject = 'medly-test';
+let firebasePrivateKey: CryptoKey;
+let firebaseKid: string;
+
+async function firebaseToken(
+  overrides: Record<string, unknown> = {},
+  header: Record<string, string> = {},
+  options: { subject?: string; issuedAt?: number; expiresAt?: number } = {},
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({
+    auth_time: now,
+    email: 'firebase.student@example.test',
+    email_verified: true,
+    name: 'Firebase Student',
+    ...overrides,
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: firebaseKid, ...header })
+    .setIssuer(`https://securetoken.google.com/${firebaseProject}`)
+    .setAudience(firebaseProject)
+    .setSubject(options.subject ?? 'firebase-user-1')
+    .setIssuedAt(options.issuedAt ?? now)
+    .setExpirationTime(options.expiresAt ?? now + 3600)
+    .sign(firebasePrivateKey);
+}
+
 async function seed(): Promise<void> {
   const now = Date.now();
   await env.DB.batch([
-    env.DB.prepare('INSERT INTO users (id, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').bind(userId, 'student@example.test', 'Student', 'USER', now, now),
-    env.DB.prepare('INSERT INTO users (id, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').bind(secondUserId, 'other@example.test', 'Other Student', 'USER', now, now),
-    env.DB.prepare('INSERT INTO users (id, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').bind(adminId, 'admin@example.test', 'Admin', 'ADMIN', now, now),
+    env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(userId, seedSubjects.get(userId), 'student@example.test', 'Student', 'USER', now, now),
+    env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(secondUserId, seedSubjects.get(secondUserId), 'other@example.test', 'Other Student', 'USER', now, now),
+    env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(adminId, seedSubjects.get(adminId), 'admin@example.test', 'Admin', 'ADMIN', now, now),
+    env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(superAdminId, seedSubjects.get(superAdminId), 'super-admin@example.test', 'Super Admin', 'SUPER_ADMIN', now, now),
   ]);
 }
 
 beforeAll(async () => {
+  const pair = await generateKeyPair('RS256');
+  firebasePrivateKey = pair.privateKey;
+  firebaseKid = 'firebase-test-key';
+  const publicJwk = await exportJWK(pair.publicKey);
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url === 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com') {
+      return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: firebaseKid, use: 'sig', alg: 'RS256' }] }), {
+        headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  }));
   await env.DB.batch(migration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
 });
+
+afterAll(() => vi.unstubAllGlobals());
 
 beforeEach(async () => {
   await env.DB.batch([
     'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
   await seed();
+  authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
+    id,
+    await firebaseToken({ email: `${subject}@example.test` }, {}, { subject }),
+  ] as const)));
 });
 
 describe('Medly API', () => {
@@ -59,6 +120,27 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/modules/${module.id}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
   });
 
+  it('lets only a super admin manage operational admin roles', async () => {
+    expect((await request('/api/v1/admin/users', { headers: auth(adminId) })).status).toBe(403);
+
+    const listed = await request('/api/v1/admin/users', { headers: auth(superAdminId) });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ data: expect.arrayContaining([
+      expect.objectContaining({ id: userId, role: 'USER' }),
+    ]) });
+
+    const promoted = await json(`/api/v1/admin/users/${userId}/role`, 'PATCH', { role: 'ADMIN' }, superAdminId);
+    expect(promoted.status).toBe(200);
+    expect(await promoted.json()).toMatchObject({ data: { id: userId, role: 'ADMIN' } });
+    expect((await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(userId).first<{ role: string }>())?.role).toBe('ADMIN');
+
+    expect((await json(`/api/v1/admin/users/${secondUserId}/role`, 'PATCH', { role: 'SUPER_ADMIN' }, superAdminId)).status).toBe(422);
+    expect((await json(`/api/v1/admin/users/${superAdminId}/role`, 'PATCH', { role: 'USER' }, superAdminId)).status).toBe(409);
+
+    const module = { title: 'Super-admin course', number: '901', academicYear: '2026', semester: 'Fall', priceCents: 0 };
+    expect((await json('/api/v1/modules', 'POST', module, superAdminId)).status).toBe(201);
+  });
+
   it('enforces the module-to-lecture relationship and cascade deletion', async () => {
     const now = Date.now();
     await env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -70,6 +152,24 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/modules/${moduleId}/lectures`, { headers: auth(userId) })).status).toBe(200);
     await request(`/api/v1/modules/${moduleId}`, { method: 'DELETE', headers: auth(adminId) });
     expect((await env.DB.prepare('SELECT count(*) AS count FROM lectures WHERE module_id = ?').bind(moduleId).first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it('does not disclose locked video URLs in either lecture list', async () => {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Protected course', '2', '2026', 'Fall', 100, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Protected lecture', '', 'Subject', now, 'https://video.example.test/private', now, now),
+    ]);
+
+    const byModule = await request(`/api/v1/modules/${moduleId}/lectures`, { headers: auth(userId) });
+    expect(await byModule.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: null, videoLocked: true }] });
+
+    const acrossModules = await request('/api/v1/lectures', { headers: auth(userId) });
+    expect(await acrossModules.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: null, videoLocked: true }] });
+
+    await env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(userId, moduleId, now).run();
+    const unlocked = await request('/api/v1/lectures', { headers: auth(userId) });
+    expect(await unlocked.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: 'https://video.example.test/private', videoLocked: false }] });
   });
 
   it('creates a booking and grants video access only when accepted', async () => {
@@ -84,9 +184,50 @@ describe('Medly API', () => {
     expect(created.status).toBe(201);
     const bookingId = (await created.json() as { data: { id: string } }).data.id;
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(403);
+    expect((await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(userId) })).status).toBe(403);
+    const receipt = await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId) });
+    expect(receipt.status).toBe(200);
+    expect(receipt.headers.get('Content-Type')).toBe('application/pdf');
+    expect(new TextDecoder().decode(await receipt.arrayBuffer())).toBe('receipt');
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' })).status).toBe(200);
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(200);
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'REJECTED' })).status).toBe(409);
+  });
+
+  it('does not grant access when a conditional booking decision loses the race', async () => {
+    const now = Date.now();
+    const bookingId = '66666666-6666-4666-8666-666666666666';
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Race course', '22', '2026', 'Fall', 100, now, now),
+      env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(bookingId, userId, moduleId, `payment-receipts/${userId}/race.pdf`, 'race.pdf', 'application/pdf', 1, 'REJECTED', now, now),
+    ]);
+    expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' })).status).toBe(409);
+    expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ? AND module_id = ?').bind(userId, moduleId).first()).toBeNull();
+  });
+
+  it('requires a bounded declared upload size', async () => {
+    const chunkedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('receipt'));
+        controller.close();
+      },
+    });
+    const missingLength = await request('/api/v1/bookings/receipt', {
+      method: 'POST',
+      headers: { ...auth(userId), 'Content-Type': 'application/pdf', 'X-Filename': 'receipt.pdf' },
+      body: chunkedBody,
+    });
+    expect(missingLength.status).toBe(400);
+
+    const tooLarge = await request('/api/v1/bookings/receipt', {
+      method: 'POST',
+      headers: {
+        ...auth(userId), 'Content-Type': 'application/pdf', 'X-Filename': 'receipt.pdf',
+        'Content-Length': String(10 * 1024 * 1024 + 1),
+      },
+      body: 'receipt',
+    });
+    expect(tooLarge.status).toBe(400);
   });
 
   it('isolates flashcard progress and hiding never deletes the global card', async () => {
@@ -119,4 +260,99 @@ describe('Medly API', () => {
     const checked = await json(`/api/v1/mcqs/${question.id}/check-answer`, 'POST', { choiceId: question.choices[1]!.id }, userId);
     expect((await checked.json() as { data: { correct: boolean } }).data.correct).toBe(true);
   });
+
+  it('verifies Firebase ID tokens and rejects invalid Firebase claims or signatures', async () => {
+    const valid = await firebaseToken();
+    expect(await verifyFirebaseIdToken(valid, env)).toMatchObject({
+      subject: 'firebase-user-1', email: 'firebase.student@example.test', name: 'Firebase Student',
+    });
+
+    expect(await verifyFirebaseIdToken(await firebaseToken({}, {}, { expiresAt: Math.floor(Date.now() / 1000) - 1 }), env)).toBeNull();
+    expect(await verifyFirebaseIdToken(await firebaseToken({}, { kid: 'unknown-key' }), env)).toBeNull();
+    expect(await verifyFirebaseIdToken('not-a-jwt', env)).toBeNull();
+    expect(await verifyFirebaseIdToken(await firebaseToken({ email_verified: false }), env)).toBeNull();
+    expect(await verifyFirebaseIdToken(await firebaseToken({ auth_time: undefined }), env)).toBeNull();
+    expect(await verifyFirebaseIdToken(await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) + 3600 }), env)).toBeNull();
+
+    const wrongProject = await new SignJWT({ email: 'firebase.student@example.test', email_verified: true })
+      .setProtectedHeader({ alg: 'RS256', kid: firebaseKid })
+      .setIssuer(`https://securetoken.google.com/${firebaseProject}`)
+      .setAudience('another-project')
+      .setSubject('firebase-user-1')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(firebasePrivateKey);
+    expect(await verifyFirebaseIdToken(wrongProject, env)).toBeNull();
+
+    const wrongIssuer = await new SignJWT({ email: 'firebase.student@example.test', email_verified: true })
+      .setProtectedHeader({ alg: 'RS256', kid: firebaseKid })
+      .setIssuer('https://issuer.example.test')
+      .setAudience(firebaseProject)
+      .setSubject('firebase-user-1')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(firebasePrivateKey);
+    expect(await verifyFirebaseIdToken(wrongIssuer, env)).toBeNull();
+
+    const unsigned = `${btoa(JSON.stringify({ alg: 'none' })).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')}.${btoa(JSON.stringify({
+      aud: firebaseProject, iss: `https://securetoken.google.com/${firebaseProject}`, sub: 'firebase-user-1', exp: 9999999999, iat: 1,
+    })).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')}.`;
+    expect(await verifyFirebaseIdToken(unsigned, env)).toBeNull();
+
+    const wrongAlgorithm = await new SignJWT({ email: 'firebase.student@example.test', email_verified: true })
+      .setProtectedHeader({ alg: 'HS256', kid: firebaseKid })
+      .setIssuer(`https://securetoken.google.com/${firebaseProject}`)
+      .setAudience(firebaseProject)
+      .setSubject('firebase-user-1')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode('this-test-secret-is-at-least-32-bytes'));
+    expect(await verifyFirebaseIdToken(wrongAlgorithm, env)).toBeNull();
+  });
+
+  it('provisions Firebase sessions, links legacy users, and makes repeat login idempotent', async () => {
+    const token = await firebaseToken();
+    expect((await request('/api/v1/modules', { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
+    const created = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    expect(created.status).toBe(200);
+    const createdPayload = await created.json() as { data: { user: { id: string; role: string; name: string }; created: boolean } };
+    expect(createdPayload.data.created).toBe(true);
+    expect(createdPayload.data.user.role).toBe('USER');
+    expect(createdPayload.data.user.name).toBe('Firebase Student');
+
+    const repeated = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    expect(await repeated.json()).toMatchObject({ data: { created: false, user: { id: createdPayload.data.user.id } } });
+
+    const fallbackToken = await firebaseToken({ email: 'fallback-name@example.test', name: '' }, {}, { subject: 'fallback-name-user' });
+    const fallback = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${fallbackToken}` } });
+    expect(await fallback.json()).toMatchObject({ data: { created: true, user: { name: 'fallback-name' } } });
+
+    await env.DB.prepare('UPDATE users SET external_subject = NULL WHERE id = ?').bind(userId).run();
+    const legacyToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'legacy-firebase-user' });
+    const legacy = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${legacyToken}` } });
+    expect(await legacy.json()).toMatchObject({ data: { created: false, user: { id: userId, role: 'USER', name: 'Student' } } });
+    expect((await env.DB.prepare('SELECT external_subject AS subject FROM users WHERE id = ?').bind(userId).first<{ subject: string }>())?.subject).toBe('legacy-firebase-user');
+  });
+
+  it('rejects conflicting Firebase email links and keeps Firebase roles in D1', async () => {
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind('99999999-9999-4999-8999-999999999999', 'another-firebase-user', 'firebase.student@example.test', 'Linked', 'USER', now, now).run();
+    const collision = await request('/api/v1/auth/session', {
+      method: 'POST', headers: { Authorization: `Bearer ${await firebaseToken()}` },
+    });
+    expect(collision.status).toBe(409);
+
+    const token = await firebaseToken({ email: 'promote@example.test' });
+    await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const payload = { title: 'Firebase role test', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 0 };
+    expect((await request('/api/v1/modules', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })).status).toBe(403);
+    await env.DB.prepare('UPDATE users SET role = ? WHERE external_subject = ?').bind('ADMIN', 'firebase-user-1').run();
+    expect((await request('/api/v1/modules', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })).status).toBe(201);
+  });
+
 });

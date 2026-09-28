@@ -1,6 +1,6 @@
 # Medly roadmap
 
-Last reviewed: 2026-09-14
+Last reviewed: 2026-09-28
 
 This roadmap is derived from `docs/medly-srs.pdf` and `docs/Features.pdf`, then checked against the current repository. It distinguishes an implemented backend capability from the mobile experience that still needs to consume it.
 
@@ -9,9 +9,9 @@ This roadmap is derived from `docs/medly-srs.pdf` and `docs/Features.pdf`, then 
 | Workstream | Progress | Current state |
 | --- | --- | --- |
 | Backend foundation and learning API | Substantially complete | Local Worker, D1/R2, validation, authorization boundary, migrations, and integration tests are working. |
-| External authentication | Not started by design | Clerk selected; no provider SDK, keys, or production token verification has been added. |
+| External authentication | Backend complete; client setup pending | Firebase ID-token verification and idempotent local-account provisioning are implemented. The client still needs verified email/password, Google, and Apple sign-in. |
 | Mobile application | Not started in this repository | Required screens, offline behavior, PDF annotation, and player/UI behavior remain client work. |
-| Production setup and launch | Not started | No paid Cloudflare resources, Clerk instance, production secrets, or deployment have been created. |
+| Production setup and launch | Not started | No paid Cloudflare resources, Firebase project configuration, or deployment have been created. |
 
 ## Phase 0 — product decisions
 
@@ -19,8 +19,9 @@ This roadmap is derived from `docs/medly-srs.pdf` and `docs/Features.pdf`, then 
 - [x] Keep videos on YouTube/external hosting; the API stores only the URL.
 - [x] Keep PDF annotation and offline annotation storage on the user device.
 - [x] Use English with system-default/fallback behavior in the client.
-- [x] Select Clerk for Google, Apple, and admin email/password authentication.
-- [ ] Confirm whether "recovery codes" means emailed password-reset OTPs, offline MFA backup codes, or both. Clerk supports both, but the admin UX should be explicit.
+- [x] Select Firebase Authentication for email/password, Google, and Apple student identity.
+- [x] Require verified email before a Firebase identity can access the API.
+- [ ] Decide whether to enable MFA for administrators after the initial launch.
 - [ ] Choose the mobile stack and confirm whether the app needs iOS, Android, or both for the first release.
 
 ## Phase 1 — backend platform
@@ -31,22 +32,23 @@ Status: **complete locally**
 - [x] Wrangler local D1 and private R2 bindings in `wrangler.jsonc`.
 - [x] Drizzle schema, initial migration, generated Cloudflare types, and local migration command.
 - [x] JSON error format, Zod request validation, pagination, CORS configuration, and role middleware.
-- [x] Local-only development-token adapter, isolated from the eventual provider verifier.
+- [x] Firebase ID-token verification for local development and deployed environments.
 - [x] Workers-backed integration tests and a real local Worker/D1 smoke test.
 
 Exit check: `npm install`, `npm run db:migrate:local`, `npm run typecheck`, and `npm test` all pass.
 
-## Phase 2 — Clerk authentication and account bootstrap
+## Phase 2 — Firebase authentication and account bootstrap
 
-Status: **not started intentionally**
+Status: **backend complete; Firebase client setup pending**
 
-- [ ] Create the Clerk development instance; enable Google and Apple for students.
-- [ ] Disable public password signup; provision password-based accounts only for admins.
-- [ ] Configure the admin password reset flow with email OTP and, if required, MFA backup codes.
-- [ ] Replace `verifiedProviderSubject()` in `src/middleware/auth.ts` with Clerk JWT/JWKS verification.
-- [ ] On first verified sign-in, create/update the D1 user record using Clerk user ID as `external_subject`.
-- [ ] Establish an explicit, audited process for granting and revoking the D1 `ADMIN` role.
-- [ ] Test unauthenticated, student, and admin access against real Clerk tokens.
+- [x] Verify Firebase ID tokens with Firebase's public JWKS, RS256, project audience, securetoken issuer, expiry, issued-at, UID, and verified email.
+- [x] Add idempotent `POST /auth/session` account creation, legacy-email linking, and collision protection.
+- [x] Preserve local D1 roles and profiles; new Firebase accounts default to `USER` and Firebase claims cannot grant `ADMIN`.
+- [x] Test invalid tokens, session creation/repeat/link/collision, and D1-only admin authorization with signed local fixtures.
+- [ ] Create Firebase environments; enable Email/Password, Google, and Apple; add authorized domains; and register Android/iOS platform IDs as applicable.
+- [ ] Configure the Apple Developer Service ID, return URL, signing key, and private email relay.
+- [ ] Configure `FIREBASE_PROJECT_ID` for every Worker environment and implement Firebase client login, email verification/reset, account linking, and `getIdToken()` refresh handling.
+- [x] Establish an audited role-management path: a deployment-time seeder provisions `SUPER_ADMIN`; only that role can grant or revoke `ADMIN`.
 
 ## Phase 3 — modules, lectures, and materials
 
@@ -102,13 +104,13 @@ Status: **not started**
 - [ ] Create production D1 and private R2 resources only when approved.
 - [ ] Put the real D1 ID in `wrangler.jsonc`; configure production origins and secrets with Wrangler.
 - [ ] Apply the migration remotely and deploy the Worker.
-- [ ] Run an end-to-end smoke test with Clerk, private files, booking approval, flashcard state, and MCQ answer checking.
+- [ ] Run an end-to-end smoke test with verified email/password, Google, and Apple login; private files; booking approval; flashcard state; and MCQ answer checking.
 - [ ] Add error monitoring/log review and a simple backup/export routine for D1 before inviting real students.
 
 ## Current next actions
 
-1. Verify the intended Clerk recovery-code behavior and create a development Clerk instance.
-2. Choose the mobile stack, then implement module/lecture/material browsing against the existing API.
+1. Create the Firebase development project; enable Email/Password, Google, and Apple; register client platforms/domains; and configure `FIREBASE_PROJECT_ID`.
+2. Choose the mobile stack, then implement Firebase login, verification/reset, account linking, and module/lecture/material browsing against the existing API.
 3. Build the admin booking review and student booking submission screens.
 
 ## Explicitly out of scope for this MVP

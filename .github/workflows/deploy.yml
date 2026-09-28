@@ -43,6 +43,14 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Validate production Worker configuration
+        env:
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+        run: |
+          test -n "$FIREBASE_PROJECT_ID"
+          test -n "$CORS_ORIGINS"
+
       - name: Apply unapplied production D1 migrations
         uses: cloudflare/wrangler-action@v4
         with:
@@ -55,7 +63,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy --var FIREBASE_PROJECT_ID:${{ vars.FIREBASE_PROJECT_ID }} --var CORS_ORIGINS:${{ vars.CORS_ORIGINS }}
 
       - name: Smoke-test production health endpoint
         env:

@@ -12,11 +12,13 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply medly-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply medly-db --remote",
+    "seed:superadmin": "node scripts/seed-superadmin.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",
+    "jose": "^6.2.12",
     "zod": "^4.3.6"
   },
   "devDependencies": {

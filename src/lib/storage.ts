@@ -22,10 +22,11 @@ export async function putPrivateObject(
   ownerId: string,
 ): Promise<{ objectKey: string; filename: string; contentType: string; sizeBytes: number }> {
   const filename = request.headers.get('X-Filename');
-  const length = Number(request.headers.get('Content-Length') ?? 0);
+  const contentLength = request.headers.get('Content-Length');
+  const length = contentLength === null ? Number.NaN : Number(contentLength);
   const contentType = request.headers.get('Content-Type')?.split(';')[0] ?? 'application/octet-stream';
   if (!filename || !request.body) throw badRequest('A raw file body and X-Filename header are required');
-  if (!Number.isFinite(length) || length < 0 || length > MAX_BYTES) throw badRequest('File must be 10 MB or smaller');
+  if (!Number.isSafeInteger(length) || length < 0 || length > MAX_BYTES) throw badRequest('A valid Content-Length of 10 MB or smaller is required');
   if (purpose === 'payment-receipt' && !['application/pdf', 'image/jpeg', 'image/png'].includes(contentType)) {
     throw badRequest('Payment receipts must be PDF, JPEG, or PNG');
   }
@@ -33,7 +34,14 @@ export async function putPrivateObject(
     throw badRequest('Flashcard images must be JPEG, PNG, or WebP');
   }
   const key = objectKey(purpose, ownerId, filename);
-  const stored = await bucket.put(key, request.body, { httpMetadata: { contentType } });
+  // R2 only accepts streams with a known length. The fixed-length stream also
+  // rejects a body that is larger or smaller than the declared, already-capped
+  // Content-Length, so a forged header cannot bypass the size limit.
+  const body = new FixedLengthStream(length);
+  const [stored] = await Promise.all([
+    bucket.put(key, body.readable, { httpMetadata: { contentType } }),
+    request.body.pipeTo(body.writable),
+  ]);
   if (!stored) throw new Error('R2 upload precondition failed');
   return { objectKey: key, filename: safeFilename(filename), contentType, sizeBytes: stored.size };
 }

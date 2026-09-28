@@ -1,4 +1,4 @@
-# Enables only the local development token adapter. Never enable this in production.
-DEV_AUTH_ENABLED=true
+# Firebase project ID used to validate Firebase ID-token audience and issuer.
+FIREBASE_PROJECT_ID=replace-with-your-firebase-project-id
 # Comma-separated origins allowed to call the API. Use * only during local development.
 CORS_ORIGINS=http://localhost:3000,http://localhost:8081

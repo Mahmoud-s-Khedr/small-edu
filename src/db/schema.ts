@@ -19,9 +19,9 @@ export const users = sqliteTable('users', {
   externalSubject: text('external_subject').unique(),
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
-  role: text('role', { enum: ['USER', 'ADMIN'] }).notNull().default('USER'),
+  role: text('role', { enum: ['USER', 'ADMIN', 'SUPER_ADMIN'] }).notNull().default('USER'),
   ...timestamps,
-}, (table) => [check('users_role_check', sql`${table.role} IN ('USER', 'ADMIN')`)]);
+}, (table) => [check('users_role_check', sql`${table.role} IN ('USER', 'ADMIN', 'SUPER_ADMIN')`)]);
 
 export const modules = sqliteTable('modules', {
   id: text('id').primaryKey(),
