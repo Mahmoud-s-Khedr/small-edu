@@ -45,3 +45,11 @@ export async function putPrivateObject(
   if (!stored) throw new Error('R2 upload precondition failed');
   return { objectKey: key, filename: safeFilename(filename), contentType, sizeBytes: stored.size };
 }
+
+/** R2 accepts up to 1,000 keys per delete call. Empty input is a no-op. */
+export async function deletePrivateObjects(bucket: R2Bucket, keys: Iterable<string | null | undefined>): Promise<void> {
+  const uniqueKeys = [...new Set([...keys].filter((key): key is string => !!key))];
+  for (let offset = 0; offset < uniqueKeys.length; offset += 1_000) {
+    await bucket.delete(uniqueKeys.slice(offset, offset + 1_000));
+  }
+}

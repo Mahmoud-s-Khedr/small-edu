@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [cloudflareTest({
     wrangler: { configPath: './wrangler.jsonc' },
     miniflare: {
-      bindings: { FIREBASE_PROJECT_ID: 'medly-test' },
+      bindings: { FIREBASE_PROJECT_ID: 'medly-test', CORS_ORIGINS: '*' },
     },
   })],
   test: {

@@ -74,7 +74,7 @@ All routes except health require a bearer token. Admin routes additionally requi
 - `GET|POST /api/v1/modules/:moduleId/lectures`
 - `GET|PATCH|DELETE /api/v1/lectures/:lectureId`, `GET /api/v1/lectures/:lectureId/video`
 - `GET|POST /api/v1/lectures/:lectureId/materials` and `GET /api/v1/lectures/:lectureId/materials/:materialId/download`
-- `POST /api/v1/bookings/receipt` (raw bytes plus `X-Filename`), then `POST /api/v1/bookings`
+- `POST /api/v1/bookings/receipt` (raw bytes plus `X-Filename`), then `POST /api/v1/bookings`; use `DELETE /api/v1/bookings/receipt` to discard an unsubmitted upload. A daily Worker job removes unsubmitted receipts after 24 hours.
 - `GET /api/v1/admin/bookings`, `PATCH /api/v1/admin/bookings/:bookingId`
 - `GET|POST /api/v1/lectures/:lectureId/flashcards`, `PUT /api/v1/flashcards/:flashcardId/state`
 - `GET|POST /api/v1/lectures/:lectureId/mcqs`, `POST /api/v1/mcqs/:mcqId/check-answer`

@@ -451,6 +451,19 @@ type Response = Success<Upload>;
 Keep the returned `objectKey`: it is required when creating the booking and is
 accepted only if it belongs to the authenticated user.
 
+Unsubmitted receipt uploads are removed after 24 hours by the scheduled Worker
+cleanup. A client can discard one immediately with the endpoint below.
+
+### `DELETE /bookings/receipt`
+
+Deletes an unsubmitted receipt owned by the authenticated user. Submitted
+receipts are retained for the booking-review record.
+
+```ts
+type Body = { receiptKey: string };
+// 204 No Content
+```
+
 ### `POST /bookings`
 
 Creates a pending booking request. One active (`PENDING` or `ACCEPTED`)

@@ -1,10 +1,10 @@
-import { and, asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../db/client';
 import { flashcards, lectures, userFlashcardState } from '../db/schema';
-import { notFound } from '../lib/errors';
+import { badRequest, notFound } from '../lib/errors';
 import { flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam } from '../lib/validation';
-import { putPrivateObject } from '../lib/storage';
+import { deletePrivateObjects, putPrivateObject } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 import { z } from 'zod';
@@ -23,6 +23,28 @@ const cardResponse = (card: typeof flashcards.$inferSelect, state?: typeof userF
   backImageUrl: card.backImageKey ? `/api/v1/flashcards/${card.id}/image/back` : null,
   state: state ? { knowledge: state.knowledge, hidden: state.hidden, viewedAt: state.viewedAt, updatedAt: state.updatedAt } : null,
 });
+
+function validateCardContent(card: Pick<typeof flashcards.$inferInsert, 'frontText' | 'frontImageKey' | 'backText' | 'backImageKey'>): void {
+  if (!card.frontText && !card.frontImageKey) throw badRequest('A front text or image is required');
+  if (!card.backText && !card.backImageKey) throw badRequest('A back text or image is required');
+}
+
+function validateImageKeys(lectureId: string, keys: Array<string | null | undefined>): void {
+  for (const imageKey of keys) {
+    if (imageKey && !imageKey.startsWith(`flashcards/${lectureId}/`)) {
+      throw badRequest('Flashcard images must be uploaded for this lecture');
+    }
+  }
+}
+
+async function deleteUnreferencedImages(database: ReturnType<typeof db>, bucket: R2Bucket, keys: Array<string | null | undefined>): Promise<void> {
+  const candidates = [...new Set(keys.filter((key): key is string => !!key))];
+  if (!candidates.length) return;
+  const references = await database.select({ frontImageKey: flashcards.frontImageKey, backImageKey: flashcards.backImageKey })
+    .from(flashcards).where(or(...candidates.flatMap((key) => [eq(flashcards.frontImageKey, key), eq(flashcards.backImageKey, key)])));
+  const referenced = new Set(references.flatMap((card) => [card.frontImageKey, card.backImageKey]));
+  await deletePrivateObjects(bucket, candidates.filter((key) => !referenced.has(key)));
+}
 
 export const flashcardRoutes = new Hono<AppBindings>();
 flashcardRoutes.use('*', requireAuth);
@@ -43,9 +65,7 @@ flashcardRoutes.post('/lectures/:lectureId/flashcards', requireAdmin, async (c) 
   const input = flashcardInput.parse(await c.req.json());
   const database = db(c.env.DB);
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
-  for (const imageKey of [input.frontImageKey, input.backImageKey]) {
-    if (imageKey && !imageKey.startsWith(`flashcards/${lectureId}/`)) throw new Error('Flashcard images must be uploaded for this lecture');
-  }
+  validateImageKeys(lectureId, [input.frontImageKey, input.backImageKey]);
   const now = new Date();
   const item = { id: crypto.randomUUID(), lectureId, frontText: input.frontText ?? null, frontImageKey: input.frontImageKey ?? null, backText: input.backText ?? null, backImageKey: input.backImageKey ?? null, ordering: input.ordering, createdAt: now, updatedAt: now };
   await database.insert(flashcards).values(item);
@@ -65,15 +85,25 @@ flashcardRoutes.patch('/flashcards/:flashcardId', requireAdmin, async (c) => {
   const database = db(c.env.DB);
   const card = await database.query.flashcards.findFirst({ where: eq(flashcards.id, flashcardId) });
   if (!card) throw notFound('Flashcard not found');
+  const nextCard = { ...card, ...input };
+  validateCardContent(nextCard);
+  validateImageKeys(card.lectureId, [nextCard.frontImageKey, nextCard.backImageKey]);
   const updatedAt = new Date();
   await database.update(flashcards).set({ ...input, updatedAt }).where(eq(flashcards.id, flashcardId));
-  return c.json({ data: cardResponse({ ...card, ...input, updatedAt }) });
+  await deleteUnreferencedImages(database, c.env.STORAGE, [
+    card.frontImageKey !== nextCard.frontImageKey ? card.frontImageKey : null,
+    card.backImageKey !== nextCard.backImageKey ? card.backImageKey : null,
+  ]);
+  return c.json({ data: cardResponse({ ...nextCard, updatedAt }) });
 });
 
 flashcardRoutes.delete('/flashcards/:flashcardId', requireAdmin, async (c) => {
   const { flashcardId } = flashcardIdParam.parse(c.req.param());
-  const result = await db(c.env.DB).delete(flashcards).where(eq(flashcards.id, flashcardId)).returning({ id: flashcards.id });
-  if (!result[0]) throw notFound('Flashcard not found');
+  const database = db(c.env.DB);
+  const card = await database.query.flashcards.findFirst({ where: eq(flashcards.id, flashcardId) });
+  if (!card) throw notFound('Flashcard not found');
+  await database.delete(flashcards).where(eq(flashcards.id, flashcardId));
+  await deleteUnreferencedImages(database, c.env.STORAGE, [card.frontImageKey, card.backImageKey]);
   return c.body(null, 204);
 });
 

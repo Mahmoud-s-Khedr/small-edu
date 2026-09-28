@@ -2,11 +2,12 @@ import { and, count, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { lectures, modules } from '../db/schema';
+import { flashcards, lectureMaterials, lectures, modules } from '../db/schema';
 import { notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureInput, lecturePatch, moduleIdParam, moduleInput, modulePatch } from '../lib/validation';
 import { hasModuleVideoAccess } from '../lib/access';
+import { deletePrivateObjects } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
@@ -67,8 +68,19 @@ moduleRoutes.patch('/:moduleId', requireAdmin, async (c) => {
 
 moduleRoutes.delete('/:moduleId', requireAdmin, async (c) => {
   const { moduleId } = moduleIdParam.parse(c.req.param());
-  const result = await db(c.env.DB).delete(modules).where(eq(modules.id, moduleId)).returning({ id: modules.id });
+  const database = db(c.env.DB);
+  const [materialRows, cardRows] = await Promise.all([
+    database.select({ objectKey: lectureMaterials.objectKey }).from(lectureMaterials)
+      .innerJoin(lectures, eq(lectureMaterials.lectureId, lectures.id)).where(eq(lectures.moduleId, moduleId)),
+    database.select({ frontImageKey: flashcards.frontImageKey, backImageKey: flashcards.backImageKey }).from(flashcards)
+      .innerJoin(lectures, eq(flashcards.lectureId, lectures.id)).where(eq(lectures.moduleId, moduleId)),
+  ]);
+  const result = await database.delete(modules).where(eq(modules.id, moduleId)).returning({ id: modules.id });
   if (!result[0]) throw notFound('Module not found');
+  await deletePrivateObjects(c.env.STORAGE, [
+    ...materialRows.map((material) => material.objectKey),
+    ...cardRows.flatMap((card) => [card.frontImageKey, card.backImageKey]),
+  ]);
   return c.body(null, 204);
 });
 

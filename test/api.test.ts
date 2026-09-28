@@ -97,9 +97,10 @@ beforeEach(async () => {
 
 describe('Medly API', () => {
   it('serves health without authentication', async () => {
-    const response = await request('/api/v1/health');
+    const response = await request('/api/v1/health', { headers: { Origin: 'https://local-client.example.test' } });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: { status: 'ok' } });
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://local-client.example.test');
   });
 
   it('rejects invalid module input and anonymous access', async () => {
@@ -152,6 +153,24 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/modules/${moduleId}/lectures`, { headers: auth(userId) })).status).toBe(200);
     await request(`/api/v1/modules/${moduleId}`, { method: 'DELETE', headers: auth(adminId) });
     expect((await env.DB.prepare('SELECT count(*) AS count FROM lectures WHERE module_id = ?').bind(moduleId).first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it('removes R2 material and flashcard assets when a lecture is deleted', async () => {
+    const now = Date.now();
+    const materialKey = `lecture-materials/${lectureId}/material.pdf`;
+    const imageKey = `flashcards/${lectureId}/card.png`;
+    const cardId = '55555555-5555-4555-8555-555555555555';
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Assets', '11', '2026', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Cleanup', '', 'Assets', now, 'https://video.example.test/cleanup', now, now),
+      env.DB.prepare('INSERT INTO lecture_materials (id, lecture_id, object_key, original_filename, content_type, size_bytes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('66666666-6666-4666-8666-666666666666', lectureId, materialKey, 'material.pdf', 'application/pdf', 1, now, now),
+      env.DB.prepare('INSERT INTO flashcards (id, lecture_id, front_text, back_text, front_image_key, ordering, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(cardId, lectureId, 'Q', 'A', imageKey, 0, now, now),
+    ]);
+    await Promise.all([env.STORAGE.put(materialKey, 'm'), env.STORAGE.put(imageKey, 'i')]);
+
+    expect((await request(`/api/v1/lectures/${lectureId}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
+    expect(await env.STORAGE.head(materialKey)).toBeNull();
+    expect(await env.STORAGE.head(imageKey)).toBeNull();
   });
 
   it('does not disclose locked video URLs in either lecture list', async () => {
@@ -243,6 +262,21 @@ describe('Medly API', () => {
     const other = await request(`/api/v1/lectures/${lectureId}/flashcards`, { headers: auth(secondUserId) });
     expect((await other.json() as { data: unknown[] }).data).toHaveLength(1);
     expect((await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first())?.id).toBe(cardId);
+  });
+
+  it('rejects flashcard patches that reference a private object outside the lecture', async () => {
+    const now = Date.now();
+    const cardId = '55555555-5555-4555-8555-555555555555';
+    const receiptKey = `payment-receipts/${userId}/private.pdf`;
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Secure cards', '12', '2026', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Private keys', '', 'Secure cards', now, 'https://video.example.test/secure', now, now),
+      env.DB.prepare('INSERT INTO flashcards (id, lecture_id, front_text, back_text, ordering, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(cardId, lectureId, 'Question', 'Answer', 0, now, now),
+    ]);
+    await env.STORAGE.put(receiptKey, 'private receipt');
+
+    expect((await json(`/api/v1/flashcards/${cardId}`, 'PATCH', { frontImageKey: receiptKey })).status).toBe(400);
+    expect((await json(`/api/v1/flashcards/${cardId}`, 'PATCH', { frontText: null })).status).toBe(400);
   });
 
   it('hides MCQ answers until an explicit answer check', async () => {

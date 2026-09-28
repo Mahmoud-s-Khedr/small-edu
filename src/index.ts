@@ -1,6 +1,6 @@
 import { cors } from 'hono/cors';
 import { Hono } from 'hono';
-import { adminBookingRoutes, bookingRoutes } from './routes/bookings';
+import { adminBookingRoutes, bookingRoutes, cleanupExpiredUnsubmittedReceipts } from './routes/bookings';
 import { authRoutes } from './routes/auth';
 import { flashcardRoutes } from './routes/flashcards';
 import { healthRoutes } from './routes/health';
@@ -15,7 +15,7 @@ import type { AppBindings } from './types';
 const app = new Hono<AppBindings>();
 app.use('*', async (c, next) => {
   const origins = c.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [];
-  return cors({ origin: (origin) => origins.includes(origin) ? origin : '', credentials: true })(c, next);
+  return cors({ origin: (origin) => origins.includes('*') || origins.includes(origin) ? origin : '', credentials: true })(c, next);
 });
 app.onError(errorHandler);
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -33,4 +33,9 @@ api.route('/admin/bookings', adminBookingRoutes);
 api.route('/admin/users', adminUserRoutes);
 app.route('/api/v1', api);
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled(_event, env, ctx) {
+    ctx.waitUntil(cleanupExpiredUnsubmittedReceipts(env));
+  },
+} satisfies ExportedHandler<Env>;
