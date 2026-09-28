@@ -2,7 +2,7 @@
 
 Small, single-Worker backend for the Medly educational app. It uses Hono, Cloudflare D1, private R2, Drizzle, Zod, and Vitest's Cloudflare Workers runtime.
 
-See [ROADMAP.md](ROADMAP.md) for the product milestones and current implementation progress.
+See [ROADMAP.md](ROADMAP.md) for the product milestones and current implementation progress. For the outstanding backend-only launch work, see [docs/backend-remaining-work.md](docs/backend-remaining-work.md).
 
 ## What is included
 
@@ -79,7 +79,7 @@ All routes except health require a bearer token. Admin routes additionally requi
 - `GET|POST /api/v1/lectures/:lectureId/flashcards`, `PUT /api/v1/flashcards/:flashcardId/state`
 - `GET|POST /api/v1/lectures/:lectureId/mcqs`, `POST /api/v1/mcqs/:mcqId/check-answer`
 
-For the current MVP, uploads proxy files up to 10 MB through the Worker. The storage boundary is kept separate so a direct R2 temporary-credential flow can replace this when genuinely needed for larger files.
+For the current MVP, uploads proxy files up to 100 MB through the Worker. The storage boundary is kept separate so a direct R2 temporary-credential flow can replace this when genuinely needed for larger files.
 
 ## Production Cloudflare and GitHub setup
 

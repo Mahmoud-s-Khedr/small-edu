@@ -242,7 +242,7 @@ describe('Medly API', () => {
       method: 'POST',
       headers: {
         ...auth(userId), 'Content-Type': 'application/pdf', 'X-Filename': 'receipt.pdf',
-        'Content-Length': String(10 * 1024 * 1024 + 1),
+        'Content-Length': String(100 * 1024 * 1024 + 1),
       },
       body: 'receipt',
     });

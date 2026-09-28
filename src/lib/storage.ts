@@ -1,6 +1,6 @@
 import { badRequest } from './errors';
 
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = 100 * 1024 * 1024;
 const safeFilename = (filename: string) => filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
 
 export type UploadPurpose = 'lecture-material' | 'payment-receipt' | 'flashcard-image';
@@ -26,7 +26,7 @@ export async function putPrivateObject(
   const length = contentLength === null ? Number.NaN : Number(contentLength);
   const contentType = request.headers.get('Content-Type')?.split(';')[0] ?? 'application/octet-stream';
   if (!filename || !request.body) throw badRequest('A raw file body and X-Filename header are required');
-  if (!Number.isSafeInteger(length) || length < 0 || length > MAX_BYTES) throw badRequest('A valid Content-Length of 10 MB or smaller is required');
+  if (!Number.isSafeInteger(length) || length < 0 || length > MAX_BYTES) throw badRequest('A valid Content-Length of 100 MB or smaller is required');
   if (purpose === 'payment-receipt' && !['application/pdf', 'image/jpeg', 'image/png'].includes(contentType)) {
     throw badRequest('Payment receipts must be PDF, JPEG, or PNG');
   }

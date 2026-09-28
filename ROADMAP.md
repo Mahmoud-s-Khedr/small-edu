@@ -60,7 +60,7 @@ Status: **backend complete; mobile pending**
 - [x] Private R2 lecture-material upload, list, metadata edit, delete, and authenticated download.
 - [ ] Build mobile module and lecture lists, filtering/search UI, lecture details, and external video/WebView presentation.
 - [ ] Build mobile material browser/download/open-PDF flow.
-- [ ] Decide whether files larger than 10 MB need direct-to-R2 upload; current MVP proxy upload limit is 10 MB.
+- [ ] Decide whether files larger than 100 MB need direct-to-R2 upload; current MVP proxy upload limit is 100 MB.
 
 ## Phase 4 — booking and paid video access
 
