@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Medly Firebase API test client</title>
+    <title>Medly API test console</title>
   </head>
   <body>
     <main>
       <header>
         <p class="eyebrow">Development utility</p>
-        <h1>Medly Firebase API test client</h1>
-        <p>Tests Firebase email/password authentication and the deployed Medly Worker. This is not an application UI.</p>
+        <h1>Medly API test console</h1>
+        <p>Use normal form controls to exercise the Firebase and Worker flow. Tokens and passwords are never written to the activity log.</p>
       </header>
 
       <section aria-labelledby="config-heading">
@@ -35,28 +35,64 @@
           </label>
         </div>
         <div class="actions">
-          <button id="create-account" type="button">Create account and send verification</button>
+          <button id="create-account" type="button">Create account</button>
           <button id="sign-in" type="button">Sign in</button>
-          <button id="refresh-verification" type="button">Refresh verification status</button>
+          <button id="refresh-verification" type="button">Refresh verification</button>
           <button id="sign-out" class="secondary" type="button">Sign out</button>
         </div>
         <p id="identity-state" class="state">No Firebase user is signed in.</p>
       </section>
 
-      <section aria-labelledby="api-heading">
-        <h2 id="api-heading">Worker API</h2>
-        <p>Verify the email address first. The Worker intentionally rejects unverified Firebase tokens.</p>
+      <section aria-labelledby="quick-heading">
+        <h2 id="quick-heading">Quick checks</h2>
         <div class="actions">
           <button id="provision-session" type="button">Provision API session</button>
-          <button id="get-me" type="button">Call GET /me</button>
-          <button id="get-modules" type="button">Call GET /modules</button>
-          <button id="show-token" class="secondary" type="button">Show token metadata</button>
+          <button id="get-me" class="secondary" type="button">My profile</button>
+          <button id="get-modules" class="secondary" type="button">List modules</button>
+          <button id="show-token" class="secondary" type="button">Token metadata</button>
         </div>
       </section>
 
-      <section aria-labelledby="output-heading">
-        <h2 id="output-heading">Result</h2>
+      <section aria-labelledby="explorer-heading">
+        <div class="section-title-row">
+          <div>
+            <h2 id="explorer-heading">API explorer</h2>
+            <p class="hint">Choose an operation and fill in the matching fields. IDs and upload keys returned by prior requests appear as suggestions automatically.</p>
+          </div>
+          <span id="request-badge" class="method-badge">GET</span>
+        </div>
+        <label>
+          Operation
+          <select id="endpoint-preset"></select>
+        </label>
+        <p id="request-summary" class="request-summary"></p>
+        <div id="path-fields" class="form-grid dynamic-fields"></div>
+        <div id="query-fields" class="form-grid dynamic-fields"></div>
+        <div id="body-fields" class="form-grid dynamic-fields"></div>
+        <div id="file-field" class="dynamic-fields"></div>
+        <div class="actions">
+          <button id="send-request" type="button">Send request</button>
+          <button id="reset-request" class="secondary" type="button">Reset this form</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="result-heading">
+        <div class="section-title-row">
+          <h2 id="result-heading">Latest response</h2>
+          <a id="response-download" hidden>Download returned file</a>
+        </div>
         <pre id="output" aria-live="polite">Ready.</pre>
+      </section>
+
+      <section aria-labelledby="log-heading">
+        <div class="section-title-row">
+          <div>
+            <h2 id="log-heading">Activity log</h2>
+            <p class="hint">Requests, responses, timing, and failures are recorded here for this browser session.</p>
+          </div>
+          <button id="clear-log" class="secondary small-button" type="button">Clear log</button>
+        </div>
+        <div id="activity-log" class="activity-log" aria-live="polite"></div>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

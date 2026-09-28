@@ -1,6 +1,6 @@
 # Medly Firebase API test client
 
-This is a disposable browser client for validating the real Firebase-to-Worker authentication path. It is intentionally separate from the backend and is not a production UI.
+This is a disposable browser client for validating the real Firebase-to-Worker authentication path and every implemented API route. It is intentionally separate from the backend and is not a production UI.
 
 ## Before running it
 
@@ -25,6 +25,17 @@ Open the URL printed by Vite, normally `http://localhost:5173`.
 2. Return to this page, sign in, and use **Refresh verification status**. It must show `email verified`.
 3. Choose **Provision API session**. A `201` response means the Worker created the local D1 user; a repeat request should return `200` with `created: false`.
 4. Use **Call GET /me** and **Call GET /modules** to prove the same Firebase token can access protected Worker routes.
+
+## Test every backend route
+
+The **API explorer** groups presets for all system, user, module, lecture/material, booking, flashcard, and MCQ routes. It automatically sends the current Firebase ID token for every protected route. Each operation has normal form controls for its path, query, and body fields—no request JSON needs to be written. The **Activity log** records requests, response statuses, timing, and failures without recording passwords or bearer tokens.
+
+1. Select an operation and fill in its fields. IDs and upload keys returned by prior requests are offered as suggestions in later fields.
+2. For receipt, material, or flashcard-image upload presets, select a file. The console sends it as raw bytes with the required `X-Filename` and `Content-Type` headers.
+3. Download routes return a downloadable file link instead of attempting to render file bytes as JSON.
+4. The console does not make a user privileged. To exercise admin routes, seed a super admin, use `GET /admin/users` to locate a test account, then grant it `ADMIN`. The seed command is documented in [the authentication runbook](../docs/authentication.md#bootstrap-the-first-super-admin).
+
+Suggested end-to-end sequence: create a module and lecture as an admin; upload/list/download a material; create flashcards/MCQs; upload a receipt as a student; accept it as an admin; then verify that the student can retrieve the lecture video URL.
 
 If an API call fails in the browser with a CORS error, check that the deployed Worker configuration includes the exact origin `http://localhost:5173` in `CORS_ORIGINS` and has been redeployed.
 
