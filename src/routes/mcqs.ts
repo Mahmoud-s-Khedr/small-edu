@@ -8,9 +8,9 @@ import { lectureIdParam, mcqIdParam, mcqInput, mcqPatch } from '../lib/validatio
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
-const publicQuestion = (question: typeof mcqs.$inferSelect, choices: Array<typeof mcqChoices.$inferSelect>) => ({
+const questionResponse = (question: typeof mcqs.$inferSelect, choices: Array<typeof mcqChoices.$inferSelect>) => ({
   id: question.id, lectureId: question.lectureId, questionText: question.questionText, ordering: question.ordering,
-  choices: choices.map(({ isCorrect: _isCorrect, ...choice }) => choice),
+  choices,
 });
 
 async function questionWithChoices(database: ReturnType<typeof db>, id: string) {
@@ -28,7 +28,7 @@ mcqRoutes.get('/lectures/:lectureId/mcqs', async (c) => {
   const database = db(c.env.DB);
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
   const questions = await database.select().from(mcqs).where(eq(mcqs.lectureId, lectureId)).orderBy(asc(mcqs.ordering));
-  const result = await Promise.all(questions.map(async (question) => publicQuestion(question,
+  const result = await Promise.all(questions.map(async (question) => questionResponse(question,
     await database.select().from(mcqChoices).where(eq(mcqChoices.mcqId, question.id)).orderBy(asc(mcqChoices.ordering)))));
   return c.json({ data: result });
 });
@@ -43,7 +43,7 @@ mcqRoutes.post('/lectures/:lectureId/mcqs', requireAdmin, async (c) => {
   await database.insert(mcqs).values(question);
   const choices = input.choices.map((choice, ordering) => ({ id: crypto.randomUUID(), mcqId: question.id, choiceText: choice.text, isCorrect: choice.isCorrect, ordering }));
   await database.insert(mcqChoices).values(choices);
-  return c.json({ data: publicQuestion(question, choices) }, 201);
+  return c.json({ data: questionResponse(question, choices) }, 201);
 });
 
 mcqRoutes.patch('/mcqs/:mcqId', requireAdmin, async (c) => {
@@ -61,7 +61,7 @@ mcqRoutes.patch('/mcqs/:mcqId', requireAdmin, async (c) => {
   }
   const result = await questionWithChoices(database, mcqId);
   if (!result) throw notFound('MCQ not found');
-  return c.json({ data: publicQuestion(result.question, result.choices) });
+  return c.json({ data: questionResponse(result.question, result.choices) });
 });
 
 mcqRoutes.delete('/mcqs/:mcqId', requireAdmin, async (c) => {

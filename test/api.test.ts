@@ -237,29 +237,41 @@ describe('Medly API', () => {
     expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ? AND module_id = ?').bind(userId, moduleId).first()).toBeNull();
   });
 
-  it('requires a bounded declared upload size', async () => {
-    const chunkedBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('receipt'));
-        controller.close();
-      },
-    });
-    const missingLength = await request('/api/v1/bookings/receipt', {
-      method: 'POST',
-      headers: { ...auth(userId), 'Content-Type': 'application/pdf', 'X-Filename': 'receipt.pdf' },
-      body: chunkedBody,
-    });
-    expect(missingLength.status).toBe(400);
+  it('uses only presigned upload endpoints and validates upload metadata before signing', async () => {
+    expect((await request('/api/v1/bookings/receipt', {
+      method: 'POST', headers: { ...auth(userId), 'Content-Type': 'application/pdf' }, body: 'receipt',
+    })).status).toBe(404);
+    expect((await json('/api/v1/uploads', 'POST', {
+      purpose: 'payment-receipt', filename: 'receipt.pdf', contentType: 'application/pdf', sizeBytes: 100 * 1024 * 1024 + 1,
+    }, userId)).status).toBe(422);
+    expect((await json('/api/v1/uploads', 'POST', {
+      purpose: 'payment-receipt', filename: 'receipt.gif', contentType: 'image/gif', sizeBytes: 1,
+    }, userId)).status).toBe(400);
+  });
 
-    const tooLarge = await request('/api/v1/bookings/receipt', {
-      method: 'POST',
-      headers: {
-        ...auth(userId), 'Content-Type': 'application/pdf', 'X-Filename': 'receipt.pdf',
-        'Content-Length': String(100 * 1024 * 1024 + 1),
-      },
-      body: 'receipt',
-    });
-    expect(tooLarge.status).toBe(400);
+  it('authorizes a direct R2 upload and verifies it before attaching it', async () => {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Direct files', '23', '2026', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Direct upload', '', 'Files', now, 'https://video.example.test/files', now, now),
+    ]);
+    const details = { filename: 'notes.pdf', contentType: 'application/pdf', sizeBytes: 5 };
+    const initiated = await json('/api/v1/uploads', 'POST', { purpose: 'lecture-material', lectureId, ...details });
+    expect(initiated.status).toBe(201);
+    const plan = (await initiated.json() as { data: { objectKey: string; uploadUrl: string; requiredHeaders: { 'Content-Type': string } } }).data;
+    expect(plan.objectKey).toMatch(new RegExp(`^lecture-materials/${lectureId}/`));
+    expect(plan.uploadUrl).toContain('X-Amz-Expires=600');
+    expect(plan.requiredHeaders).toEqual({ 'Content-Type': 'application/pdf' });
+
+    await env.STORAGE.put(plan.objectKey, 'notes', { httpMetadata: { contentType: 'application/pdf' } });
+    const completed = await json('/api/v1/uploads/complete', 'POST', { purpose: 'lecture-material', lectureId, objectKey: plan.objectKey, ...details });
+    expect(completed.status).toBe(201);
+    expect(await completed.json()).toMatchObject({ data: { lectureId, originalFilename: 'notes.pdf', sizeBytes: 5 } });
+
+    const wrongSize = await json('/api/v1/uploads/complete', 'POST', {
+      purpose: 'payment-receipt', objectKey: `payment-receipts/${userId}/missing.pdf`, filename: 'missing.pdf', contentType: 'application/pdf', sizeBytes: 1,
+    }, userId);
+    expect(wrongSize.status).toBe(400);
   });
 
   it('isolates flashcard progress and hiding never deletes the global card', async () => {
@@ -277,6 +289,34 @@ describe('Medly API', () => {
     expect((await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first())?.id).toBe(cardId);
   });
 
+  it('returns presigned R2 image URLs with list and single-card responses', async () => {
+    const now = Date.now();
+    const cardId = '56555555-5555-4555-8555-555555555555';
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Image cards', '13', '2026', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Images', '', 'Visual', now, 'https://video.example.test/images', now, now),
+      env.DB.prepare('INSERT INTO flashcards (id, lecture_id, front_text, back_text, front_image_key, back_image_key, ordering, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(cardId, lectureId, 'Question', 'Answer', `flashcards/${lectureId}/front.png`, `flashcards/${lectureId}/back.png`, 0, now, now),
+    ]);
+
+    const response = await request(`/api/v1/lectures/${lectureId}/flashcards`, { headers: auth(userId) });
+    expect(response.status).toBe(200);
+    const list = await response.json() as { data: Array<{ frontImageUrl: string; backImageUrl: string }> };
+    const listedCard = list.data[0];
+    if (!listedCard) throw new Error('Expected the seeded flashcard');
+    for (const imageUrl of [listedCard.frontImageUrl, listedCard.backImageUrl]) {
+      const parsed = new URL(imageUrl);
+      expect(parsed.origin).toBe('https://medly-storage.test-account.r2.cloudflarestorage.com');
+      expect(parsed.searchParams.get('X-Amz-Expires')).toBe('600');
+      expect(parsed.searchParams.get('X-Amz-Signature')).toBeTruthy();
+    }
+
+    const single = await request(`/api/v1/flashcards/${cardId}`, { headers: auth(userId) });
+    expect(single.status).toBe(200);
+    const card = (await single.json() as { data: { frontImageUrl: string; backImageUrl: string } }).data;
+    expect(new URL(card.frontImageUrl).pathname).toBe(`/flashcards/${lectureId}/front.png`);
+    expect(new URL(card.backImageUrl).pathname).toBe(`/flashcards/${lectureId}/back.png`);
+  });
+
   it('rejects flashcard patches that reference a private object outside the lecture', async () => {
     const now = Date.now();
     const cardId = '55555555-5555-4555-8555-555555555555';
@@ -292,7 +332,7 @@ describe('Medly API', () => {
     expect((await json(`/api/v1/flashcards/${cardId}`, 'PATCH', { frontText: null })).status).toBe(400);
   });
 
-  it('hides MCQ answers until an explicit answer check', async () => {
+  it('returns MCQ answers while retaining answer checks', async () => {
     const now = Date.now();
     await env.DB.batch([
       env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Pharmacology', '4', '2026', 'Fall', 0, now, now),
@@ -303,7 +343,8 @@ describe('Medly API', () => {
     ] });
     const question = (await created.json() as { data: { id: string; choices: Array<{ id: string }> } }).data;
     const listed = await request(`/api/v1/lectures/${lectureId}/mcqs`, { headers: auth(userId) });
-    expect(JSON.stringify(await listed.json())).not.toContain('isCorrect');
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ data: [{ choices: [{ isCorrect: false }, { isCorrect: true }, { isCorrect: false }, { isCorrect: false }] }] });
     const checked = await json(`/api/v1/mcqs/${question.id}/check-answer`, 'POST', { choiceId: question.choices[1]!.id }, userId);
     expect((await checked.json() as { data: { correct: boolean } }).data.correct).toBe(true);
   });

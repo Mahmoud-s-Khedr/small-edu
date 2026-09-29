@@ -36,6 +36,7 @@ type Field = {
   fullWidth?: boolean;
 };
 type FileField = { accept: string; label: string; help: string };
+type DirectUpload = { purpose: 'lecture-material' | 'payment-receipt' | 'flashcard-image'; requiresLecture?: boolean };
 type Preset = {
   group: string;
   label: string;
@@ -46,6 +47,7 @@ type Preset = {
   body?: Field[];
   mcqChoices?: boolean;
   file?: FileField;
+  directUpload?: DirectUpload;
   saveIdAs?: string;
   saveObjectKeyAs?: string;
 };
@@ -114,12 +116,12 @@ const presets: Preset[] = [
   ] },
   { group: 'Lectures and materials', label: 'Delete lecture', method: 'DELETE', path: '/lectures/:lectureId', params: [lectureId()] },
   { group: 'Lectures and materials', label: 'List materials', method: 'GET', path: '/lectures/:lectureId/materials', params: [lectureId()], saveIdAs: 'materialId' },
-  { group: 'Lectures and materials', label: 'Upload material', method: 'POST', path: '/lectures/:lectureId/materials', params: [lectureId()], file: { label: 'Lecture material', accept: '', help: 'The selected file is sent as raw bytes with its filename and content type.' }, saveIdAs: 'materialId' },
+  { group: 'Lectures and materials', label: 'Upload material', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Lecture material', accept: '', help: 'Uploads directly to private R2 after the API issues a short-lived URL.' }, directUpload: { purpose: 'lecture-material', requiresLecture: true }, saveIdAs: 'materialId' },
   { group: 'Lectures and materials', label: 'Download material', method: 'GET', path: '/lectures/:lectureId/materials/:materialId/download', params: [lectureId(), materialId()] },
   { group: 'Lectures and materials', label: 'Rename material', method: 'PATCH', path: '/lectures/:lectureId/materials/:materialId', params: [lectureId(), materialId()], body: [{ name: 'originalFilename', label: 'New filename', required: true, placeholder: 'renamed-material.pdf' }] },
   { group: 'Lectures and materials', label: 'Delete material', method: 'DELETE', path: '/lectures/:lectureId/materials/:materialId', params: [lectureId(), materialId()] },
   { group: 'Lectures and materials', label: 'Get unlocked video URL', method: 'GET', path: '/lectures/:lectureId/video', params: [lectureId()] },
-  { group: 'Bookings', label: 'Upload receipt', method: 'POST', path: '/bookings/receipt', file: { label: 'Receipt file', accept: '.pdf,image/jpeg,image/png', help: 'Accepted formats: PDF, JPEG, or PNG. The maximum size is 10 MiB.' }, saveObjectKeyAs: 'receiptKey' },
+  { group: 'Bookings', label: 'Upload receipt', method: 'POST', path: '/uploads', file: { label: 'Receipt file', accept: '.pdf,image/jpeg,image/png', help: 'Uploads directly to private R2. Accepted formats: PDF, JPEG, or PNG; maximum size is 100 MiB.' }, directUpload: { purpose: 'payment-receipt' }, saveObjectKeyAs: 'receiptKey' },
   { group: 'Bookings', label: 'Delete unsubmitted receipt', method: 'DELETE', path: '/bookings/receipt', body: [{ name: 'receiptKey', label: 'Receipt upload key', required: true, suggestion: 'receiptKey' }] },
   { group: 'Bookings', label: 'Create booking request', method: 'POST', path: '/bookings', saveIdAs: 'bookingId', body: [{ ...moduleId(), required: true }, { name: 'receiptKey', label: 'Receipt upload key', required: true, suggestion: 'receiptKey' }] },
   { group: 'Bookings', label: 'List my bookings', method: 'GET', path: '/bookings', saveIdAs: 'bookingId' },
@@ -131,20 +133,19 @@ const presets: Preset[] = [
     { name: 'frontText', label: 'Front text', type: 'textarea', fullWidth: true, help: 'Provide text, an image key, or both for each side.' }, { name: 'backText', label: 'Back text', type: 'textarea', fullWidth: true },
     { name: 'frontImageKey', label: 'Front image upload key', suggestion: 'flashcardImageKey' }, { name: 'backImageKey', label: 'Back image upload key', suggestion: 'flashcardImageKey' }, { name: 'ordering', label: 'Order', type: 'number', placeholder: '0' },
   ] },
-  { group: 'Flashcards', label: 'Upload flashcard image', method: 'POST', path: '/lectures/:lectureId/flashcards/image', params: [lectureId()], file: { label: 'Flashcard image', accept: 'image/jpeg,image/png,image/webp', help: 'Accepted formats: JPEG, PNG, or WebP. The maximum size is 10 MiB.' }, saveObjectKeyAs: 'flashcardImageKey' },
+  { group: 'Flashcards', label: 'Upload flashcard image', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Flashcard image', accept: 'image/jpeg,image/png,image/webp', help: 'Uploads directly to private R2. Accepted formats: JPEG, PNG, or WebP; maximum size is 100 MiB.' }, directUpload: { purpose: 'flashcard-image', requiresLecture: true }, saveObjectKeyAs: 'flashcardImageKey' },
   { group: 'Flashcards', label: 'Update flashcard', method: 'PATCH', path: '/flashcards/:flashcardId', params: [flashcardId()], body: [
     { name: 'frontText', label: 'Front text', type: 'textarea', fullWidth: true }, { name: 'backText', label: 'Back text', type: 'textarea', fullWidth: true },
     { name: 'frontImageKey', label: 'Front image upload key', suggestion: 'flashcardImageKey' }, { name: 'backImageKey', label: 'Back image upload key', suggestion: 'flashcardImageKey' }, { name: 'ordering', label: 'Order', type: 'number' },
   ] },
   { group: 'Flashcards', label: 'Delete flashcard', method: 'DELETE', path: '/flashcards/:flashcardId', params: [flashcardId()] },
+  { group: 'Flashcards', label: 'Get flashcard', method: 'GET', path: '/flashcards/:flashcardId', params: [flashcardId()] },
   { group: 'Flashcards', label: 'Set my flashcard state', method: 'PUT', path: '/flashcards/:flashcardId/state', params: [flashcardId()], body: [
     { name: 'knowledge', label: 'Knowledge', type: 'select', options: [['', 'Leave unchanged'], ['KNOWN', 'Known'], ['UNKNOWN', 'Unknown'], ['null', 'Clear knowledge']] },
     { name: 'hidden', label: 'Hide this card?', type: 'select', options: [['', 'Leave unchanged'], ['true', 'Yes'], ['false', 'No']] },
     { name: 'viewed', label: 'Mark as viewed?', type: 'select', options: [['', 'Leave unchanged'], ['true', 'Yes'], ['false', 'No']] },
   ] },
   { group: 'Flashcards', label: 'Get flashcard progress', method: 'GET', path: '/lectures/:lectureId/flashcards/progress', params: [lectureId()] },
-  { group: 'Flashcards', label: 'Get flashcard front image', method: 'GET', path: '/flashcards/:flashcardId/image/front', params: [flashcardId()] },
-  { group: 'Flashcards', label: 'Get flashcard back image', method: 'GET', path: '/flashcards/:flashcardId/image/back', params: [flashcardId()] },
   { group: 'MCQs', label: 'List lecture MCQs', method: 'GET', path: '/lectures/:lectureId/mcqs', params: [lectureId()], saveIdAs: 'mcqId' },
   { group: 'MCQs', label: 'Create MCQ', method: 'POST', path: '/lectures/:lectureId/mcqs', params: [lectureId()], saveIdAs: 'mcqId', body: [{ name: 'questionText', label: 'Question', type: 'textarea', fullWidth: true, required: true }, { name: 'ordering', label: 'Order', type: 'number', placeholder: '0' }], mcqChoices: true },
   { group: 'MCQs', label: 'Update MCQ', method: 'PATCH', path: '/mcqs/:mcqId', params: [mcqId()], body: [{ name: 'questionText', label: 'Question', type: 'textarea', fullWidth: true }, { name: 'ordering', label: 'Order', type: 'number' }], mcqChoices: true },
@@ -277,7 +278,7 @@ function rememberResponse(preset: Preset, payload: unknown): void {
   updateSuggestions();
 }
 
-async function sendApiRequest(method: string, path: string, body?: BodyInit, file?: File, preset?: Preset): Promise<unknown> {
+async function sendApiRequest(method: string, path: string, body?: BodyInit, _file?: File, preset?: Preset): Promise<unknown> {
   const started = performance.now();
   let entry: LogItem | undefined;
   try {
@@ -285,10 +286,7 @@ async function sendApiRequest(method: string, path: string, body?: BodyInit, fil
     entry = addLog(`${method} ${path}`, `Sending request to ${base}${path}`, 'pending');
     const headers = new Headers();
     if (path !== '/health') headers.set('Authorization', `Bearer ${await token()}`);
-    if (file) {
-      headers.set('Content-Type', file.type || 'application/octet-stream');
-      headers.set('X-Filename', file.name);
-    } else if (body) {
+    if (body) {
       headers.set('Content-Type', 'application/json');
     }
     const response = await fetch(`${base}${path}`, { method, headers, body });
@@ -463,8 +461,8 @@ function readField(field: Field, scope: string): unknown {
   return raw;
 }
 
-function buildPath(preset: Preset): string {
-  let path = preset.path;
+function buildPath(preset: Preset, template = preset.path): string {
+  let path = template;
   for (const field of preset.params ?? []) {
     const value = readField(field, 'path');
     path = path.replace(`:${field.name}`, encodeURIComponent(String(value)));
@@ -476,6 +474,29 @@ function buildPath(preset: Preset): string {
   }
   const queryString = query.toString();
   return queryString ? `${path}?${queryString}` : path;
+}
+
+async function sendDirectUpload(preset: Preset, config: DirectUpload, file: File): Promise<unknown> {
+  const details = { filename: file.name, contentType: file.type || 'application/octet-stream', sizeBytes: file.size };
+  const lectureField = preset.params?.find((field) => field.name === 'lectureId');
+  const lectureId = config.requiresLecture && lectureField ? String(readField(lectureField, 'path')) : undefined;
+  if (config.requiresLecture && !lectureId) throw new Error('Lecture ID is required for this upload.');
+  const uploadInput = { ...details, purpose: config.purpose, ...(lectureId ? { lectureId } : {}) };
+  const initiated = await sendApiRequest('POST', '/uploads', JSON.stringify(uploadInput));
+  const plan = initiated && typeof initiated === 'object' && 'data' in initiated
+    ? (initiated as { data: unknown }).data : undefined;
+  if (!plan || typeof plan !== 'object' || !('uploadUrl' in plan) || !('objectKey' in plan) || !('requiredHeaders' in plan)) {
+    throw new Error('The API did not return a valid direct-upload plan.');
+  }
+  const { uploadUrl, objectKey, requiredHeaders } = plan as { uploadUrl: string; objectKey: string; requiredHeaders: Record<string, string> };
+  const entry = addLog('PUT direct R2 upload', `${file.name} · ${file.size} bytes`, 'pending');
+  const response = await fetch(uploadUrl, { method: 'PUT', headers: requiredHeaders, body: file });
+  if (!response.ok) {
+    updateLog(entry, 'error', `${response.status} ${response.statusText || 'R2 upload failed'}`);
+    throw new Error(`Direct R2 upload failed (${response.status}). Request a new upload URL and try again.`);
+  }
+  updateLog(entry, 'success', `${response.status} ${response.statusText || 'Uploaded directly to R2'}`);
+  return sendApiRequest('POST', '/uploads/complete', JSON.stringify({ objectKey, ...uploadInput }), undefined, preset);
 }
 
 function buildBody(preset: Preset): BodyInit | undefined {
@@ -552,8 +573,12 @@ sendButton.addEventListener('click', async () => {
     const path = buildPath(preset);
     const file = document.querySelector<HTMLInputElement>('#request-file')?.files?.[0];
     if (preset.file && !file) throw new Error(`${preset.file.label} is required.`);
-    const body = file ? file : buildBody(preset);
-    await sendApiRequest(preset.method, path, body, file, preset);
+    if (file && preset.directUpload) {
+      await sendDirectUpload(preset, preset.directUpload, file);
+    } else {
+      const body = file ? file : buildBody(preset);
+      await sendApiRequest(preset.method, path, body, file, preset);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     show({ error: message });

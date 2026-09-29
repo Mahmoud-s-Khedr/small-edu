@@ -16,8 +16,21 @@ const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, createdAt: da
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Material');
 const booking = z.object({ id: uuid, userId: uuid, moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
 const flashcard = z.object({ id: uuid, lectureId: uuid, frontText: z.string().nullable(), backText: z.string().nullable(), frontImageUrl: z.string().nullable(), backImageUrl: z.string().nullable(), ordering: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Flashcard');
-const mcq = z.object({ id: uuid, lectureId: uuid, questionText: z.string(), ordering: z.number().int(), choices: z.array(z.object({ id: uuid, choiceText: z.string(), ordering: z.number().int() })) }).openapi('Mcq');
+const mcq = z.object({ id: uuid, lectureId: uuid, questionText: z.string(), ordering: z.number().int(), choices: z.array(z.object({ id: uuid, choiceText: z.string(), isCorrect: z.boolean(), ordering: z.number().int() })) }).openapi('Mcq');
 const upload = z.object({ objectKey: z.string(), filename: z.string(), contentType: z.string(), sizeBytes: z.number().int() }).openapi('Upload');
+const uploadDetails = z.object({ filename: z.string().min(1).max(255), contentType: z.string().min(1).max(255), sizeBytes: z.number().int().positive().max(104_857_600) });
+const presignedUpload = upload.extend({ uploadUrl: z.string().url(), expiresAt: dateTime, requiredHeaders: z.object({ 'Content-Type': z.string() }) }).openapi('PresignedUpload');
+const completedUpload = uploadDetails.extend({ objectKey: z.string().min(1).max(500) });
+const uploadRequest = z.discriminatedUnion('purpose', [
+  uploadDetails.extend({ purpose: z.literal('lecture-material'), lectureId: uuid }),
+  uploadDetails.extend({ purpose: z.literal('flashcard-image'), lectureId: uuid }),
+  uploadDetails.extend({ purpose: z.literal('payment-receipt') }),
+]).openapi('UploadRequest');
+const uploadCompletion = z.discriminatedUnion('purpose', [
+  completedUpload.extend({ purpose: z.literal('lecture-material'), lectureId: uuid }),
+  completedUpload.extend({ purpose: z.literal('flashcard-image'), lectureId: uuid }),
+  completedUpload.extend({ purpose: z.literal('payment-receipt') }),
+]).openapi('UploadCompletion');
 const error = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) }).openapi('ApiError');
 const envelope = <T extends z.ZodType>(data: T) => z.object({ data });
 const paginated = <T extends z.ZodType>(data: T) => z.object({ data: z.array(data), meta: z.object({ page: z.number().int(), pageSize: z.number().int(), limit: z.number().int(), offset: z.number().int(), total: z.number().int() }) });
@@ -86,13 +99,11 @@ secured('get', '/me', ['Authentication'], 'Get the current local user', envelope
   secured('patch', '/lectures/{lectureId}', ['Lectures'], 'Update a lecture (admin)', envelope(lectureDto), { params: lectureIdParam, body: { content: { 'application/json': { schema: lecturePatch } } } });
   noContent('delete', '/lectures/{lectureId}', ['Lectures'], 'Delete a lecture (admin)', { params: lectureIdParam });
   secured('get', '/lectures/{lectureId}/materials', ['Lectures'], 'List lecture materials', envelope(z.array(material)), { params: lectureIdParam });
-  secured('post', '/lectures/{lectureId}/materials', ['Lectures'], 'Upload a lecture material (admin)', envelope(material), { params: lectureIdParam, body: { content: { 'application/octet-stream': { schema: z.string().openapi({ format: 'binary' }) } } } }, 201);
   secured('get', '/lectures/{lectureId}/materials/{materialId}/download', ['Lectures'], 'Download a lecture material', z.string().openapi({ format: 'binary' }), { params: lectureIdParam.extend({ materialId: uuid }) });
   secured('patch', '/lectures/{lectureId}/materials/{materialId}', ['Lectures'], 'Rename a lecture material (admin)', envelope(material), { params: lectureIdParam.extend({ materialId: uuid }), body: { content: { 'application/json': { schema: z.object({ originalFilename: z.string().min(1).max(255) }) } } } });
   noContent('delete', '/lectures/{lectureId}/materials/{materialId}', ['Lectures'], 'Delete a lecture material (admin)', { params: lectureIdParam.extend({ materialId: uuid }) });
   secured('get', '/lectures/{lectureId}/video', ['Lectures'], 'Get a lecture video URL when access is granted', envelope(z.object({ videoUrl: z.string().url() })), { params: lectureIdParam });
 
-  secured('post', '/bookings/receipt', ['Bookings'], 'Upload a payment receipt', envelope(upload), { body: { content: { 'application/octet-stream': { schema: z.string().openapi({ format: 'binary' }) } } } }, 201);
   noContent('delete', '/bookings/receipt', ['Bookings'], 'Delete an unsubmitted receipt', { body: { content: { 'application/json': { schema: z.object({ receiptKey: z.string() }) } } } });
   secured('post', '/bookings', ['Bookings'], 'Create a booking request', envelope(booking), { body: { content: { 'application/json': { schema: z.object({ moduleId: uuid, receiptKey: z.string() }) } } } }, 201);
   secured('get', '/bookings', ['Bookings'], 'List the current user’s booking requests', envelope(z.array(booking)));
@@ -104,12 +115,14 @@ secured('get', '/me', ['Authentication'], 'Get the current local user', envelope
 
   secured('get', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'List lecture flashcards', envelope(z.array(flashcard)), { params: lectureIdParam });
   secured('post', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'Create a flashcard (admin)', envelope(flashcard), { params: lectureIdParam, body: { content: { 'application/json': { schema: flashcardInput } } } }, 201);
-  secured('post', '/lectures/{lectureId}/flashcards/image', ['Flashcards'], 'Upload a flashcard image (admin)', envelope(upload), { params: lectureIdParam, body: { content: { 'application/octet-stream': { schema: z.string().openapi({ format: 'binary' }) } } } }, 201);
+  secured('get', '/flashcards/{flashcardId}', ['Flashcards'], 'Get a flashcard', envelope(flashcard), { params: flashcardIdParam });
   secured('patch', '/flashcards/{flashcardId}', ['Flashcards'], 'Update a flashcard (admin)', envelope(flashcard), { params: flashcardIdParam, body: { content: { 'application/json': { schema: flashcardPatch } } } });
   noContent('delete', '/flashcards/{flashcardId}', ['Flashcards'], 'Delete a flashcard (admin)', { params: flashcardIdParam });
   secured('put', '/flashcards/{flashcardId}/state', ['Flashcards'], 'Update the current user’s flashcard state', envelope(z.object({ knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() })), { params: flashcardIdParam, body: { content: { 'application/json': { schema: z.object({ knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() }) } } } });
   secured('get', '/lectures/{lectureId}/flashcards/progress', ['Flashcards'], 'Get flashcard progress', envelope(z.object({ total: z.number().int(), known: z.number().int(), hidden: z.number().int() })), { params: lectureIdParam });
-  secured('get', '/flashcards/{flashcardId}/image/{side}', ['Flashcards'], 'Download a flashcard image', z.string().openapi({ format: 'binary' }), { params: flashcardIdParam.extend({ side: z.enum(['front', 'back']) }) });
+
+  secured('post', '/uploads', ['Uploads'], 'Create a direct R2 upload URL', envelope(presignedUpload), { body: { content: { 'application/json': { schema: uploadRequest } } } }, 201);
+  secured('post', '/uploads/complete', ['Uploads'], 'Verify a direct upload and perform its resource-specific attachment', envelope(z.union([upload, material])), { body: { content: { 'application/json': { schema: uploadCompletion } } } }, 201);
 
   secured('get', '/lectures/{lectureId}/mcqs', ['MCQs'], 'List a lecture’s MCQs', envelope(z.array(mcq)), { params: lectureIdParam });
   secured('post', '/lectures/{lectureId}/mcqs', ['MCQs'], 'Create an MCQ (admin)', envelope(mcq), { params: lectureIdParam, body: { content: { 'application/json': { schema: mcqInput } } } }, 201);

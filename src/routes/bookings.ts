@@ -6,7 +6,6 @@ import { bookingRequests, modules } from '../db/schema';
 import { conflict, notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { bookingIdParam } from '../lib/validation';
-import { putPrivateObject } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
@@ -34,11 +33,6 @@ export async function cleanupExpiredUnsubmittedReceipts(env: Env): Promise<void>
 
 export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
-
-bookingRoutes.post('/receipt', async (c) => {
-  const upload = await putPrivateObject(c.env.STORAGE, c.req.raw, 'payment-receipt', c.get('user').id);
-  return c.json({ data: upload }, 201);
-});
 
 bookingRoutes.post('/', async (c) => {
   const { moduleId, receiptKey } = createBooking.parse(await c.req.json());

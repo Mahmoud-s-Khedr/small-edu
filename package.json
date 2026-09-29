@@ -13,11 +13,14 @@
     "db:migrate:local": "wrangler d1 migrations apply medly-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply medly-db --remote",
     "seed:superadmin": "node scripts/seed-superadmin.mjs",
+    "e2e:prepare": "node scripts/e2e-production.mjs prepare",
+    "e2e:run": "node scripts/e2e-production.mjs run",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@hono/swagger-ui": "^0.6.1",
     "@hono/zod-openapi": "^1.6.3",
+    "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",
     "jose": "^6.2.12",

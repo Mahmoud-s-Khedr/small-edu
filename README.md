@@ -42,6 +42,10 @@ npm run typecheck
 npm test
 ```
 
+For a log-preserving black-box acceptance run against the deployed Worker, see
+[the production API E2E runner](docs/production-api-e2e.md). It creates isolated
+Firebase test accounts and pauses only for email verification.
+
 `npm run db:generate` produces future Drizzle migrations. Commit each generated `.sql` migration in `drizzle/`; `db:migrate:local` and `db:migrate:remote` apply only committed migrations through Wrangler's migration tracker. The initial migration is intentionally committed and `db:migrate:local` initializes a fresh local D1 database. Local D1/R2 state is stored in `.wrangler/` and can be recreated by rerunning the migration after clearing only that project-local state.
 
 ## Firebase authentication
@@ -74,13 +78,15 @@ All routes except health require a bearer token. Admin routes additionally requi
 - `POST /api/v1/auth/session` after a Firebase client login
 - `GET|POST /api/v1/modules/:moduleId/lectures`
 - `GET|PATCH|DELETE /api/v1/lectures/:lectureId`, `GET /api/v1/lectures/:lectureId/video`
-- `GET|POST /api/v1/lectures/:lectureId/materials` and `GET /api/v1/lectures/:lectureId/materials/:materialId/download`
-- `POST /api/v1/bookings/receipt` (raw bytes plus `X-Filename`), then `POST /api/v1/bookings`; use `DELETE /api/v1/bookings/receipt` to discard an unsubmitted upload. A daily Worker job removes unsubmitted receipts after 24 hours.
+- All file types use `POST /api/v1/uploads` → R2 `PUT` → `POST /api/v1/uploads/complete`. Set `purpose` to `lecture-material`, `flashcard-image`, or `payment-receipt`; lecture uploads additionally include `lectureId`. Material completion creates the material, while receipt/image completion returns its private object key. `GET /api/v1/lectures/:lectureId/materials/:materialId/download` downloads a material.
+- Create a booking with `POST /api/v1/bookings` after completing a receipt upload; use `DELETE /api/v1/bookings/receipt` to discard an unsubmitted upload. A daily Worker job removes unsubmitted receipts after 24 hours.
 - `GET /api/v1/admin/bookings`, `PATCH /api/v1/admin/bookings/:bookingId`
 - `GET|POST /api/v1/lectures/:lectureId/flashcards`, `PUT /api/v1/flashcards/:flashcardId/state`
 - `GET|POST /api/v1/lectures/:lectureId/mcqs`, `POST /api/v1/mcqs/:mcqId/check-answer`
 
-For the current MVP, uploads proxy files up to 100 MB through the Worker. The storage boundary is kept separate so a direct R2 temporary-credential flow can replace this when genuinely needed for larger files.
+Uploads use 10-minute, single-object R2 presigned PUT URLs. Flashcard responses use equivalent short-lived presigned GET URLs for their images. The API authenticates and validates the requested filename, MIME type, and size; the client sends the bytes directly to private R2, then calls a completion endpoint that verifies the stored object's exact size and MIME type before it is attached to application data.
+
+Before deploying direct uploads, create an R2 S3 API token limited to **Object Read & Write** for `medly-storage` and set Worker secrets `R2_S3_ACCESS_KEY_ID` and `R2_S3_SECRET_ACCESS_KEY`; set non-secret variables `R2_ACCOUNT_ID` and (if different) `R2_BUCKET_NAME`. Configure the bucket CORS policy to allow `GET` and `PUT` from each browser origin in `CORS_ORIGINS`, allow the `Content-Type` request header, and expose `ETag`.
 
 ## Production Cloudflare and GitHub setup
 
@@ -99,12 +105,12 @@ npx wrangler r2 bucket create medly-storage
 
 Copy the D1 `database_id` printed by the first command into `wrangler.jsonc`. Before every first deployment, verify that its checked-in ID identifies the intended database; the remote migration and deployment commands use it directly. The R2 binding uses its existing bucket name; keep the bucket private—do not configure a public bucket or public custom domain. Confirm that `DB` maps to `medly-db` and `STORAGE` maps to `medly-storage` before the first deployment.
 
-Set the non-secret production GitHub environment variables `FIREBASE_PROJECT_ID` and `CORS_ORIGINS` before deployment. The deployment workflow refuses to deploy if either is empty, then passes both values to Wrangler explicitly; `wrangler.jsonc` therefore never ships development placeholders. A Firebase service-account credential and Firebase client API key must not be added as Worker secrets; the Worker needs only the project ID and Firebase's public signing keys. `CORS_ORIGINS` must list the mobile/web client origins, comma-separated.
+Set the non-secret production GitHub environment variables `FIREBASE_PROJECT_ID` and `CORS_ORIGINS`, plus `R2_S3_ACCESS_KEY_ID` and `R2_S3_SECRET_ACCESS_KEY` as GitHub environment secrets, before deployment. The deployment workflow refuses to deploy if any required value is empty, passes the variables and direct-upload signing secrets to Wrangler, and uses `CLOUDFLARE_ACCOUNT_ID` as the Worker’s `R2_ACCOUNT_ID`; `wrangler.jsonc` therefore never ships development placeholders. A Firebase service-account credential and Firebase client API key must not be added as Worker secrets; the Worker needs only the project ID and Firebase's public signing keys. `CORS_ORIGINS` must list the mobile/web client origins, comma-separated.
 
 ### First GitHub Actions setup
 
 1. In the repository, open **Settings → Environments → New environment** and create `production`.
-2. Add these `production` environment secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+2. Add these `production` environment secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY`. The R2 credentials must belong to a token restricted to Object Read & Write on `medly-storage`.
 3. Add these non-secret `production` environment variables: `PRODUCTION_API_URL` (for example `https://medly-api.<your-subdomain>.workers.dev`), `FIREBASE_PROJECT_ID`, and `CORS_ORIGINS` (comma-separated web origins). `PRODUCTION_API_URL` needs no trailing slash.
 4. Create an account-scoped Cloudflare API token limited to the production account. Grant **Workers Scripts: Edit** to deploy the Worker, **D1: Edit** to apply migrations, and **Workers R2 Storage: Edit** for the existing R2 binding. If Cloudflare's token UI separates them, also grant the read-only account/user metadata permissions included by its **Edit Cloudflare Workers** template. Do not use a Global API Key.
 5. Push a branch, open a pull request, and merge it into `main`. GitHub Actions will run the production migration, deploy the Worker, then request `/api/v1/health`.

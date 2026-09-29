@@ -367,26 +367,29 @@ type Path = { lectureId: string };
 type Response = Success<Material[]>;
 ```
 
-### `POST /lectures/:lectureId/materials` — Admin
+### Upload files
 
-Uploads one private lecture material as a raw request body—not multipart form
-data. `Content-Length` is mandatory and must be at most 10 MiB; the streamed
-body is also capped at 10 MiB.
-No lecture-material MIME-type allowlist is applied.
-
-```http
-Content-Type: application/pdf
-Content-Length: 12345
-X-Filename: lecture-notes.pdf
-
-<raw file bytes>
-```
+All file uploads use the same two API endpoints. `POST /uploads` accepts:
 
 ```ts
-type Path = { lectureId: string };
-// 201
-type Response = Success<Material>;
+type Body =
+  | { purpose: 'lecture-material'; lectureId: string; filename: string; contentType: string; sizeBytes: number }
+  | { purpose: 'flashcard-image'; lectureId: string; filename: string; contentType: string; sizeBytes: number }
+  | { purpose: 'payment-receipt'; filename: string; contentType: string; sizeBytes: number }; // max 100 MiB
+type Response = Success<Upload & {
+  uploadUrl: string;
+  expiresAt: string;
+  requiredHeaders: { 'Content-Type': string };
+}>;
 ```
+
+PUT the file bytes directly to `uploadUrl` with `requiredHeaders`, then call
+`POST /uploads/complete` with `{ objectKey, ...Body }`. It verifies the stored
+object. A lecture-material completion creates and returns `Success<Material>`;
+receipt and image completion return `Success<Upload>`. Lecture material and
+flashcard image uploads require an admin role. No lecture-material MIME-type
+allowlist is applied; receipts allow PDF/JPEG/PNG and flashcard images allow
+JPEG/PNG/WebP.
 
 ### `GET /lectures/:lectureId/materials/:materialId/download`
 
@@ -429,24 +432,11 @@ type Response = Success<{ videoUrl: string }>;
 
 ## Bookings
 
-### `POST /bookings/receipt`
+### Payment-receipt upload
 
-Uploads a payment receipt as a raw request body. `X-Filename`, a raw body, and
-`Content-Length` are mandatory; the declared and streamed size must not exceed
-10 MiB. Allowed MIME types are `application/pdf`, `image/jpeg`, and `image/png`.
-
-```http
-Content-Type: application/pdf
-Content-Length: 12345
-X-Filename: payment.pdf
-
-<raw file bytes>
-```
-
-```ts
-// 201
-type Response = Success<Upload>;
-```
+Use the common upload flow with `purpose: 'payment-receipt'`. Allowed MIME
+types are `application/pdf`, `image/jpeg`, and `image/png`; completion returns
+`Success<Upload>` with 201.
 
 Keep the returned `objectKey`: it is required when creating the booking and is
 accepted only if it belongs to the authenticated user.
@@ -551,8 +541,9 @@ type Flashcard = {
 };
 ```
 
-The response never includes internal image keys. A non-admin user's hidden
-cards are omitted from the list; an admin can list them.
+The response never includes internal image keys. `frontImageUrl` and
+`backImageUrl` are short-lived, presigned R2 download URLs. A non-admin user's
+hidden cards are omitted from the list; an admin can list them.
 
 ### `GET /lectures/:lectureId/flashcards`
 
@@ -560,6 +551,17 @@ cards are omitted from the list; an admin can list them.
 type Path = { lectureId: string };
 // 200
 type Response = Success<Flashcard[]>;
+```
+
+### `GET /flashcards/:flashcardId`
+
+Returns one complete flashcard, including its front/back image download URLs
+and the requesting user's study state.
+
+```ts
+type Path = { flashcardId: string };
+// 200
+type Response = Success<Flashcard>;
 ```
 
 ### `POST /lectures/:lectureId/flashcards` — Admin
@@ -581,25 +583,11 @@ type Body = {
 type Response = Success<Flashcard>;
 ```
 
-### `POST /lectures/:lectureId/flashcards/image` — Admin
+### Flashcard-image upload — Admin
 
-Uploads a raw image. `X-Filename` and a raw body are required; the declared
-`Content-Length` must be no more than 10 MiB. Allowed MIME types are
-`image/jpeg`, `image/png`, and `image/webp`.
-
-```http
-Content-Type: image/png
-Content-Length: 12345
-X-Filename: card-front.png
-
-<raw image bytes>
-```
-
-```ts
-type Path = { lectureId: string };
-// 201
-type Response = Success<Upload>;
-```
+Use the common upload flow with `purpose: 'flashcard-image'` and `lectureId`.
+Allowed MIME types are `image/jpeg`, `image/png`, and `image/webp`; completion
+returns `Success<Upload>` with 201.
 
 ### `PATCH /flashcards/:flashcardId` — Admin
 
@@ -659,14 +647,6 @@ type Path = { lectureId: string };
 type Response = Success<{ total: number; known: number; hidden: number }>;
 ```
 
-### `GET /flashcards/:flashcardId/image/:side`
-
-Returns the private card image using its original metadata.
-
-```ts
-type Path = { flashcardId: string; side: 'front' | 'back' };
-// 200 binary image response
-```
 
 ## MCQs
 
@@ -683,10 +663,11 @@ type McqInput = {
   // Exactly one choice must have isCorrect: true.
 };
 
-type PublicMcqChoice = {
+type McqChoice = {
   id: string;
   mcqId: string;
   choiceText: string;
+  isCorrect: boolean;
   ordering: number;
 };
 
@@ -695,12 +676,12 @@ type Mcq = {
   lectureId: string;
   questionText: string;
   ordering: number;
-  choices: PublicMcqChoice[];
+  choices: McqChoice[];
 };
 ```
 
-Correct-answer values are intentionally never included in MCQ list/create/
-update responses, including for admins.
+Correct-answer values are included in MCQ list, create, and update responses.
+`POST /mcqs/:mcqId/check-answer` remains available for future progress tracking.
 
 ### `GET /lectures/:lectureId/mcqs`
 
@@ -752,6 +733,9 @@ type Response = Success<{ correct: boolean; correctChoiceId: string }>;
 
 ## Implementation notes
 
-- File uploads use raw bytes, not `multipart/form-data`.
+- Prefer direct R2 uploads: `POST /uploads` with the shared file metadata and
+  purpose; PUT the bytes to `data.uploadUrl` with `data.requiredHeaders`; then
+  POST the returned `objectKey` and the same input to `/uploads/complete`.
+  URLs expire after 10 minutes and must be treated as bearer tokens.
 - The API accepts dates through JavaScript date coercion. ISO 8601 UTC strings
   are the portable client format.

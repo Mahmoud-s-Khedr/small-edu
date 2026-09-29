@@ -4,7 +4,8 @@ import { db } from '../db/client';
 import { flashcards, lectures, userFlashcardState } from '../db/schema';
 import { badRequest, notFound } from '../lib/errors';
 import { flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam } from '../lib/validation';
-import { deletePrivateObjects, putPrivateObject } from '../lib/storage';
+import { deletePrivateObjects } from '../lib/storage';
+import { createPresignedDownload } from '../lib/presigned-uploads';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 import { z } from 'zod';
@@ -15,14 +16,24 @@ const stateInput = z.object({
   viewed: z.boolean().optional(),
 }).refine((value) => Object.keys(value).length > 0, 'At least one state field is required');
 
-const cardResponse = (card: typeof flashcards.$inferSelect, state?: typeof userFlashcardState.$inferSelect) => ({
+const cardResponse = async (
+  env: Env,
+  card: typeof flashcards.$inferSelect,
+  state?: typeof userFlashcardState.$inferSelect,
+) => {
+  const [frontImageUrl, backImageUrl] = await Promise.all([
+    card.frontImageKey ? createPresignedDownload(env, card.frontImageKey) : null,
+    card.backImageKey ? createPresignedDownload(env, card.backImageKey) : null,
+  ]);
+  return {
   ...card,
   frontImageKey: undefined,
   backImageKey: undefined,
-  frontImageUrl: card.frontImageKey ? `/api/v1/flashcards/${card.id}/image/front` : null,
-  backImageUrl: card.backImageKey ? `/api/v1/flashcards/${card.id}/image/back` : null,
+  frontImageUrl,
+  backImageUrl,
   state: state ? { knowledge: state.knowledge, hidden: state.hidden, viewedAt: state.viewedAt, updatedAt: state.updatedAt } : null,
-});
+  };
+};
 
 function validateCardContent(card: Pick<typeof flashcards.$inferInsert, 'frontText' | 'frontImageKey' | 'backText' | 'backImageKey'>): void {
   if (!card.frontText && !card.frontImageKey) throw badRequest('A front text or image is required');
@@ -57,7 +68,8 @@ flashcardRoutes.get('/lectures/:lectureId/flashcards', async (c) => {
   const rows = await database.select({ card: flashcards, state: userFlashcardState }).from(flashcards)
     .leftJoin(userFlashcardState, and(eq(userFlashcardState.flashcardId, flashcards.id), eq(userFlashcardState.userId, user.id)))
     .where(eq(flashcards.lectureId, lectureId)).orderBy(asc(flashcards.ordering));
-  return c.json({ data: rows.filter((row) => user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || !row.state?.hidden).map((row) => cardResponse(row.card, row.state ?? undefined)) });
+  const visibleRows = rows.filter((row) => user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || !row.state?.hidden);
+  return c.json({ data: await Promise.all(visibleRows.map((row) => cardResponse(c.env, row.card, row.state ?? undefined))) });
 });
 
 flashcardRoutes.post('/lectures/:lectureId/flashcards', requireAdmin, async (c) => {
@@ -69,14 +81,20 @@ flashcardRoutes.post('/lectures/:lectureId/flashcards', requireAdmin, async (c) 
   const now = new Date();
   const item = { id: crypto.randomUUID(), lectureId, frontText: input.frontText ?? null, frontImageKey: input.frontImageKey ?? null, backText: input.backText ?? null, backImageKey: input.backImageKey ?? null, ordering: input.ordering, createdAt: now, updatedAt: now };
   await database.insert(flashcards).values(item);
-  return c.json({ data: cardResponse(item) }, 201);
+  return c.json({ data: await cardResponse(c.env, item) }, 201);
 });
 
-flashcardRoutes.post('/lectures/:lectureId/flashcards/image', requireAdmin, async (c) => {
-  const { lectureId } = lectureIdParam.parse(c.req.param());
-  if (!await db(c.env.DB).query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
-  const upload = await putPrivateObject(c.env.STORAGE, c.req.raw, 'flashcard-image', lectureId);
-  return c.json({ data: upload }, 201);
+flashcardRoutes.get('/flashcards/:flashcardId', async (c) => {
+  const { flashcardId } = flashcardIdParam.parse(c.req.param());
+  const user = c.get('user');
+  const database = db(c.env.DB);
+  const card = await database.query.flashcards.findFirst({ where: eq(flashcards.id, flashcardId) });
+  if (!card) throw notFound('Flashcard not found');
+  const state = await database.query.userFlashcardState.findFirst({
+    where: and(eq(userFlashcardState.flashcardId, card.id), eq(userFlashcardState.userId, user.id)),
+  });
+  if (state?.hidden && user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') throw notFound('Flashcard not found');
+  return c.json({ data: await cardResponse(c.env, card, state) });
 });
 
 flashcardRoutes.patch('/flashcards/:flashcardId', requireAdmin, async (c) => {
@@ -94,7 +112,7 @@ flashcardRoutes.patch('/flashcards/:flashcardId', requireAdmin, async (c) => {
     card.frontImageKey !== nextCard.frontImageKey ? card.frontImageKey : null,
     card.backImageKey !== nextCard.backImageKey ? card.backImageKey : null,
   ]);
-  return c.json({ data: cardResponse({ ...nextCard, updatedAt }) });
+  return c.json({ data: await cardResponse(c.env, { ...nextCard, updatedAt }) });
 });
 
 flashcardRoutes.delete('/flashcards/:flashcardId', requireAdmin, async (c) => {
@@ -135,18 +153,4 @@ flashcardRoutes.get('/lectures/:lectureId/flashcards/progress', async (c) => {
     .from(userFlashcardState).innerJoin(flashcards, eq(flashcards.id, userFlashcardState.flashcardId))
     .where(and(eq(flashcards.lectureId, lectureId), eq(userFlashcardState.userId, userId))).get();
   return c.json({ data: { total: total?.count ?? 0, known: states?.known ?? 0, hidden: states?.hidden ?? 0 } });
-});
-
-flashcardRoutes.get('/flashcards/:flashcardId/image/:side', async (c) => {
-  const { flashcardId } = flashcardIdParam.parse(c.req.param());
-  const side = z.enum(['front', 'back']).parse(c.req.param('side'));
-  const card = await db(c.env.DB).query.flashcards.findFirst({ where: eq(flashcards.id, flashcardId) });
-  if (!card) throw notFound('Flashcard not found');
-  const key = side === 'front' ? card.frontImageKey : card.backImageKey;
-  if (!key) throw notFound('Flashcard image not found');
-  const object = await c.env.STORAGE.get(key);
-  if (!object || !('body' in object)) throw notFound('Stored image not found');
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  return new Response(object.body, { headers });
 });

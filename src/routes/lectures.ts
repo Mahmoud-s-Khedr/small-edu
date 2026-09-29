@@ -7,7 +7,7 @@ import { hasModuleVideoAccess, requireModuleVideoAccess } from '../lib/access';
 import { notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureIdParam, lecturePatch } from '../lib/validation';
-import { deletePrivateObjects, putPrivateObject } from '../lib/storage';
+import { deletePrivateObjects } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
@@ -94,23 +94,6 @@ lectureRoutes.get('/:lectureId/materials', async (c) => {
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
   const items = await database.select().from(lectureMaterials).where(eq(lectureMaterials.lectureId, lectureId));
   return c.json({ data: items.map(({ objectKey: _objectKey, ...material }) => material) });
-});
-
-lectureRoutes.post('/:lectureId/materials', requireAdmin, async (c) => {
-  const { lectureId } = lectureIdParam.parse(c.req.param());
-  const database = db(c.env.DB);
-  if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
-  const upload = await putPrivateObject(c.env.STORAGE, c.req.raw, 'lecture-material', lectureId);
-  const now = new Date();
-  const item = { id: crypto.randomUUID(), lectureId, objectKey: upload.objectKey, originalFilename: upload.filename, contentType: upload.contentType, sizeBytes: upload.sizeBytes, createdAt: now, updatedAt: now };
-  try {
-    await database.insert(lectureMaterials).values(item);
-  } catch (error) {
-    await c.env.STORAGE.delete(upload.objectKey);
-    throw error;
-  }
-  const { objectKey: _objectKey, ...response } = item;
-  return c.json({ data: response }, 201);
 });
 
 lectureRoutes.get('/:lectureId/video', async (c) => {
