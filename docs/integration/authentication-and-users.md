@@ -24,6 +24,18 @@ type User = {
   name: string;
   role: Role;
 };
+
+// Returned only by GET /admin/users.
+type AdminUser = User & {
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Returned by PATCH /admin/users/:userId/role.
+// `externalSubject` is the linked Firebase UID, or null for an unlinked legacy account.
+type UpdatedAdminUser = AdminUser & {
+  externalSubject: string | null;
+};
 ```
 
 ## `POST /auth/session`
@@ -34,12 +46,22 @@ idempotent, so retrying it is safe.
 
 **Authentication:** Firebase bearer token required.
 
-**Request DTO:** no body.
+**Request DTO:** an optional body may provide a display name while creating a
+new local account. The value is trimmed and must be 1–100 characters. It is
+ignored for existing or legacy-linked local accounts, so this endpoint remains
+safe to retry and is not a profile-edit endpoint.
 
 ```http
 POST /auth/session
 Authorization: Bearer <Firebase ID token>
+Content-Type: application/json
+
+{ "name": "Sara Ali" }
 ```
+
+The body may be omitted. For a newly created account, the Worker chooses the
+name in this order: supplied body value, Firebase `name` claim, then the email
+prefix. Email/password registration should send the name collected at sign-up.
 
 **Expected response — `200 OK`**
 
@@ -69,6 +91,25 @@ to restore client session state or decide whether to show admin controls.
 type Response = Success<User>;
 ```
 
+## `PATCH /me`
+
+**Job:** updates the current user’s local display name. It does not change the
+Firebase profile, email address, sign-in methods, or role.
+
+**Authentication:** Firebase bearer token required.
+
+**Request DTO**
+
+```ts
+type Body = { name: string }; // Trimmed, 1–100 characters
+```
+
+**Expected response — `200 OK`**
+
+```ts
+type Response = Success<User>;
+```
+
 ## `GET /admin/users` — Super admin only
 
 **Job:** lists local users for the super-admin role-management screen.
@@ -80,7 +121,7 @@ type Response = Success<User>;
 **Expected response — `200 OK`**
 
 ```ts
-type Response = Success<User[]>;
+type Response = Success<AdminUser[]>;
 ```
 
 ## `PATCH /admin/users/:userId/role` — Super admin only
@@ -104,7 +145,7 @@ type Body = { role: 'USER' | 'ADMIN' };
 **Expected response — `200 OK`**
 
 ```ts
-type Response = Success<User>;
+type Response = Success<UpdatedAdminUser>;
 ```
 
 `SUPER_ADMIN` cannot be granted, changed, or removed through this endpoint; it

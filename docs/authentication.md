@@ -40,7 +40,9 @@ The client must follow this sequence after every interactive sign-in:
    do not call the Medly API until `user.emailVerified` is true. Refresh or reload
    the Firebase user before checking that value.
 3. Call `getIdToken()` and send `POST /api/v1/auth/session` with
-   `Authorization: Bearer <token>`. This is provisioning, not a cookie session.
+   `Authorization: Bearer <token>`. An email/password registration can include
+   `{ "name": "Display name" }` in this first provisioning request; it is used
+   only when creating the local account. This is provisioning, not a cookie session.
 4. Retain no application auth token of its own. For every API request, get a
    current Firebase ID token (Firebase refreshes it) and send it as a Bearer token.
 5. On `401`, refresh the Firebase ID token once and retry once. If that fails,
@@ -78,9 +80,10 @@ the deployment environment restricted and record who ran it and why.
 
 Use the Firebase SDK for the selected client platform. The UI needs these paths:
 
-- **Create account with email/password:** collect email and password, call
-  Firebase registration, send verification email, and show a "check your email"
-  state. Do not offer course data until verified.
+- **Create account with email/password:** collect name, email, and password,
+  call Firebase registration, send verification email, and show a "check your
+  email" state. Once verified, include the collected name in the first
+  `/auth/session` request. Do not offer course data until verified.
 - **Sign in with email/password:** call Firebase sign-in. If the email is not
   verified, resend verification and block API provisioning.
 - **Forgot password:** use Firebase's password-reset email action. The Worker

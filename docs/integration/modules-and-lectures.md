@@ -252,7 +252,8 @@ accepted access to the lecture's module.
 ### `GET /lectures/:lectureId/materials`
 
 **Job:** list downloadable material metadata. Private R2 object keys are never
-returned to the client.
+returned to the client. Any authenticated user can list and download materials;
+unlike video playback, these routes do not require accepted module access.
 
 **Path DTO:** `type Path = { lectureId: string }; // UUID`
 
@@ -271,8 +272,9 @@ Worker.
 
 2. `PUT` the file bytes to `data.uploadUrl`, using exactly
    `data.requiredHeaders`. Do not send the Firebase token to R2.
-3. `POST /uploads/complete` with the returned
-   `objectKey` and the same `filename`, `contentType`, and `sizeBytes`.
+3. `POST /uploads/complete` with `purpose: 'lecture-material'`, the same
+   `lectureId`, the returned `objectKey`, and the same `filename`,
+   `contentType`, and `sizeBytes`.
 
 The completion endpoint verifies R2 contains an object with the exact declared
 size and MIME type, then returns `Success<Material>` with `201 Created`.

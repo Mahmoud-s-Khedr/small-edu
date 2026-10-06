@@ -35,9 +35,10 @@ type Mcq = {
 ```
 
 The list, create, and update responses return `isCorrect` for every choice.
-`check-answer` remains available for a future client-side or server-side
-progress workflow. This API does not yet persist quiz attempts, grades, timers,
-or history.
+They are therefore suitable for authoring, answer review, or a client that is
+explicitly allowed to receive answer keys; do not rely on the list endpoint to
+hide correct answers. `check-answer` is also available for immediate feedback.
+This API does not persist quiz attempts, grades, timers, or history.
 
 ## `GET /lectures/:lectureId/mcqs`
 

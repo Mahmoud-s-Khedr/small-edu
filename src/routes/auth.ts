@@ -3,6 +3,7 @@ import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
 import { users } from '../db/schema';
 import { conflict, unauthorized } from '../lib/errors';
+import { authSessionInput } from '../lib/validation';
 import { verifyFirebaseIdToken } from '../middleware/auth';
 import type { AppBindings, AuthUser } from '../types';
 
@@ -14,7 +15,6 @@ const asAuthUser = (user: typeof users.$inferSelect): AuthUser => ({
 });
 
 const fallbackName = (email: string): string => email.split('@', 1)[0] || email;
-
 /** Provision a local account only after a verified Firebase ID token. */
 export const authRoutes = new ApiRouter<AppBindings>('/auth');
 
@@ -23,6 +23,9 @@ authRoutes.post('/session', async (c) => {
   if (!value?.startsWith('Bearer ')) throw unauthorized();
   const identity = await verifyFirebaseIdToken(value.slice(7), c.env);
   if (!identity) throw unauthorized('Invalid or expired Firebase ID token');
+  const { name } = c.req.header('Content-Type')?.includes('application/json')
+    ? authSessionInput.parse(await c.req.json())
+    : {};
 
   const database = db(c.env.DB);
   const linked = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
@@ -58,7 +61,7 @@ authRoutes.post('/session', async (c) => {
     id: crypto.randomUUID(),
     externalSubject: identity.subject,
     email: identity.email,
-    name: identity.name ?? fallbackName(identity.email),
+    name: name ?? identity.name ?? fallbackName(identity.email),
     role: 'USER' as const,
     createdAt: now,
     updatedAt: now,

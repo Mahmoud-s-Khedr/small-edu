@@ -161,6 +161,12 @@ type Response = Success<{
 }>;
 ```
 
+For a new state record, omitted `knowledge` and `hidden` values initialize to
+`null` and `false`. On a partial update, only supplied `knowledge`/`hidden`
+values are persisted (and `viewed: true` records a timestamp). Treat this
+write response as an acknowledgement; reload the card/list if the client needs
+the complete canonical state after a partial update.
+
 After successful `hidden: true`, remove the card from a non-admin learner's
 local list; it will also be omitted on the next list request.
 

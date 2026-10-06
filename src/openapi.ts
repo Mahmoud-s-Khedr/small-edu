@@ -1,9 +1,9 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import type { Env } from 'hono';
 import {
-  flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
+  authSessionInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
   lecturePatch, mcqIdParam, mcqInput, mcqPatch, moduleIdParam, moduleInput,
-  modulePatch,
+  modulePatch, profileUpdateInput,
 } from './lib/validation';
 
 const uuid = z.string().uuid().openapi({ example: '11111111-1111-4111-8111-111111111111' });
@@ -83,8 +83,9 @@ export class ApiRouter<E extends Env = Env> extends OpenAPIHono<E> {
 }
 
 add({ method: 'get', path: '/health', tags: ['System'], summary: 'Health check', responses: { 200: { description: 'Worker is healthy', content: { 'application/json': { schema: envelope(z.object({ status: z.literal('ok') })) } } } } });
-secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean() })));
+secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean() })), { body: { required: false, content: { 'application/json': { schema: authSessionInput.openapi('SessionInput') } } } });
 secured('get', '/me', ['Authentication'], 'Get the current local user', envelope(user));
+secured('patch', '/me', ['Authentication'], 'Update the current user’s display name', envelope(user), { body: { content: { 'application/json': { schema: profileUpdateInput.openapi('ProfileUpdateInput') } } } });
 
   secured('get', '/modules', ['Modules'], 'List modules', paginated(moduleDto), { query: z.object({ page: z.string().optional(), pageSize: z.string().optional(), number: z.string().optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
   secured('post', '/modules', ['Modules'], 'Create a module (admin)', envelope(moduleDto), { body: { content: { 'application/json': { schema: moduleInput } } } }, 201);

@@ -30,7 +30,9 @@ type Upload = {
 ## Student booking flow
 
 ```text
-POST /bookings/receipt
+POST /uploads (purpose: 'payment-receipt')
+  → PUT bytes to data.uploadUrl with data.requiredHeaders
+  → POST /uploads/complete
   → retain data.objectKey
 POST /bookings with moduleId + receiptKey
   → show PENDING booking
@@ -38,8 +40,10 @@ admin accepts booking
   → video becomes available through the lecture endpoints
 ```
 
-An unsubmitted receipt upload is deleted automatically after 24 hours. If the
-user cancels before creating the booking, call `DELETE /bookings/receipt`.
+There is no `POST /bookings/receipt` endpoint. Receipt uploads use the shared
+`/uploads` protocol below. An unsubmitted receipt upload is deleted
+automatically after 24 hours. If the user cancels before creating the booking,
+call `DELETE /bookings/receipt`.
 
 ## Direct receipt upload
 

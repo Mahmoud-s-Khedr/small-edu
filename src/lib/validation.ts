@@ -9,6 +9,13 @@ export const flashcardIdParam = z.object({ flashcardId: z.string().uuid() });
 export const mcqIdParam = z.object({ mcqId: z.string().uuid() });
 export const bookingIdParam = z.object({ bookingId: z.string().uuid() });
 
+export const authSessionInput = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+});
+export const profileUpdateInput = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+
 export const moduleInput = z.object({
   title: z.string().trim().min(1).max(200),
   number: z.string().trim().min(1).max(50),

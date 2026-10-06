@@ -123,6 +123,20 @@ describe('Medly API', () => {
     expect((await response.json() as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('lets an authenticated user update only their display name', async () => {
+    const update = await json('/api/v1/me', 'PATCH', { name: '  Updated Student  ' }, userId);
+    expect(update.status).toBe(200);
+    expect(await update.json()).toMatchObject({ data: { id: userId, name: 'Updated Student', email: 'student@example.test', role: 'USER' } });
+
+    const current = await request('/api/v1/me', { headers: auth(userId) });
+    expect(await current.json()).toMatchObject({ data: { name: 'Updated Student' } });
+
+    const invalid = await json('/api/v1/me', 'PATCH', { name: '   ' }, userId);
+    expect(invalid.status).toBe(422);
+    const otherUser = await request('/api/v1/me', { headers: auth(secondUserId) });
+    expect((await otherUser.json() as { data: { name: string } }).data.name).toBe('Other Student');
+  });
+
   it('performs admin module CRUD and restricts regular users', async () => {
     const payload = { title: 'Cardiology', number: '101', academicYear: '2026', semester: 'Fall', priceCents: 4900 };
     expect((await json('/api/v1/modules', 'POST', payload, userId)).status).toBe(403);
@@ -414,6 +428,28 @@ describe('Medly API', () => {
     const fallbackToken = await firebaseToken({ email: 'fallback-name@example.test', name: '' }, {}, { subject: 'fallback-name-user' });
     const fallback = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${fallbackToken}` } });
     expect(await fallback.json()).toMatchObject({ data: { created: true, user: { name: 'fallback-name' } } });
+
+    const suppliedNameToken = await firebaseToken({ email: 'supplied-name@example.test' }, {}, { subject: 'supplied-name-user' });
+    const suppliedName = await request('/api/v1/auth/session', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '  Ada Lovelace  ' }),
+    });
+    expect(await suppliedName.json()).toMatchObject({ data: { created: true, user: { name: 'Ada Lovelace' } } });
+
+    const repeatWithNewName = await request('/api/v1/auth/session', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Someone Else' }),
+    });
+    expect(await repeatWithNewName.json()).toMatchObject({ data: { created: false, user: { name: 'Ada Lovelace' } } });
+
+    const invalidName = await request('/api/v1/auth/session', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '   ' }),
+    });
+    expect(invalidName.status).toBe(422);
 
     await env.DB.prepare('UPDATE users SET external_subject = NULL WHERE id = ?').bind(userId).run();
     const legacyToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'legacy-firebase-user' });

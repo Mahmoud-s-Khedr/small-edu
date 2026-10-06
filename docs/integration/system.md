@@ -26,8 +26,10 @@ is responding. This is the only public endpoint.
 - For files, POST the file metadata and a `purpose` to `/uploads`, `PUT` the
   raw bytes directly to the returned URL with the returned `Content-Type`,
   then POST the returned key and the same metadata to `/uploads/complete`.
-  Lecture material and flashcard-image uploads also require `lectureId`. Do not use
-  `multipart/form-data` or send the Firebase token to R2.
+  Lecture-material and flashcard-image uploads also require `lectureId` in both
+  API calls. Do not use `multipart/form-data` or send the Firebase token to R2.
+  `payment-receipt` completion verifies the upload and returns the key;
+  `lecture-material` completion also creates the material record.
 - Treat the returned upload URL as a short-lived bearer credential. It is
   scoped to one named object and expires after 10 minutes; retrying the PUT
   before expiry replaces that same object.
@@ -46,4 +48,4 @@ is responding. This is the only public endpoint.
 | `409` | Show the conflict message. Common examples are a duplicate active booking or deciding a booking that was already decided. |
 | `422` | Show field-level validation feedback using `error.details` when useful. |
 | `500` | Show a retryable generic failure and log enough client context for support. |
-| `503` | Direct uploads are not configured on the Worker. Do not fall back to a public bucket; contact the deployment owner. |
+| `503` | Presigned R2 URL creation is not configured on the Worker (affecting `/uploads` and flashcard-image URLs). Do not fall back to a public bucket; contact the deployment owner. |
