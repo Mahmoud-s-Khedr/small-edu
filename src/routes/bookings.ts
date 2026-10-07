@@ -3,7 +3,7 @@ import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { bookingRequests, modules } from '../db/schema';
-import { conflict, notFound } from '../lib/errors';
+import { conflict, notFound, unauthorized } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { bookingIdParam } from '../lib/validation';
 import { requireAdmin, requireAuth } from '../middleware/auth';
@@ -12,25 +12,6 @@ import type { AppBindings } from '../types';
 const createBooking = z.object({ moduleId: z.string().uuid(), receiptKey: z.string().min(1).max(500) });
 const receiptKeyInput = z.object({ receiptKey: z.string().min(1).max(500) });
 const statusBody = z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) });
-const RECEIPT_UPLOAD_GRACE_MS = 24 * 60 * 60 * 1_000;
-
-/** Removes abandoned uploads while retaining receipts referenced by any booking. */
-export async function cleanupExpiredUnsubmittedReceipts(env: Env): Promise<void> {
-  const database = db(env.DB);
-  const linkedKeys = new Set((await database.select({ receiptKey: bookingRequests.receiptKey }).from(bookingRequests))
-    .map((booking) => booking.receiptKey));
-  const cutoff = Date.now() - RECEIPT_UPLOAD_GRACE_MS;
-  let cursor: string | undefined;
-  do {
-    const listed = await env.STORAGE.list({ prefix: 'payment-receipts/', cursor, limit: 1_000 });
-    const staleKeys = listed.objects
-      .filter((object) => object.uploaded.getTime() < cutoff && !linkedKeys.has(object.key))
-      .map((object) => object.key);
-    if (staleKeys.length) await env.STORAGE.delete(staleKeys);
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-}
-
 export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
 
@@ -50,7 +31,13 @@ bookingRoutes.post('/', async (c) => {
     receiptSizeBytes: receipt.size, status: 'PENDING' as const, createdAt: now, updatedAt: now,
   };
   try {
-    await database.insert(bookingRequests).values(item);
+    const inserted = await c.env.DB.prepare(`INSERT INTO booking_requests
+      (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS
+      (SELECT 1 FROM users WHERE id = ? AND deletion_requested_at IS NULL)`)
+      .bind(item.id, user.id, moduleId, receiptKey, item.receiptFilename, item.receiptContentType,
+        item.receiptSizeBytes, item.status, now.getTime(), now.getTime(), user.id).run();
+    if (!inserted.meta.changes) throw unauthorized('This account is being deleted');
   } catch (error) {
     if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) throw conflict('An active booking already exists for this module');
     throw error;
@@ -63,12 +50,7 @@ bookingRoutes.delete('/receipt', async (c) => {
   const { receiptKey } = receiptKeyInput.parse(await c.req.json());
   const user = c.get('user');
   if (!receiptKey.startsWith(`payment-receipts/${user.id}/`)) throw conflict('Receipt does not belong to the authenticated user');
-  const database = db(c.env.DB);
-  if (await database.query.bookingRequests.findFirst({ where: eq(bookingRequests.receiptKey, receiptKey) })) {
-    throw conflict('A submitted receipt cannot be deleted');
-  }
-  await c.env.STORAGE.delete(receiptKey);
-  return c.body(null, 204);
+  throw conflict('Payment receipts are retained and cannot be deleted');
 });
 
 bookingRoutes.get('/', async (c) => {
@@ -116,6 +98,8 @@ adminBookingRoutes.patch('/:bookingId', async (c) => {
     c.env.DB.prepare(`INSERT INTO module_access (user_id, module_id, granted_at)
       SELECT user_id, module_id, ? FROM booking_requests
       WHERE id = ? AND status = 'ACCEPTED' AND ? = 'ACCEPTED'
+        AND user_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM users WHERE users.id = booking_requests.user_id AND deletion_requested_at IS NULL)
       ON CONFLICT(user_id, module_id) DO NOTHING`)
       .bind(updatedAt.getTime(), bookingId, status),
   ]);

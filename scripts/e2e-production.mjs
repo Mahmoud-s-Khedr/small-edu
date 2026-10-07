@@ -242,7 +242,7 @@ async function run() {
     check('updated MCQ includes answer keys', patchedQuestion.choices.some((choice) => choice.isCorrect === true));
     expect('admin deletes MCQ', await request('delete-mcq', actors.admin, 'DELETE', `/mcqs/${ids.question}`), 204);
     const disposable = await directUpload('student uploads disposable real receipt', actors.student, 'payment-receipt', assets.receipt);
-    expect('student deletes unsubmitted receipt', await request('delete-disposable-receipt', actors.student, 'DELETE', '/bookings/receipt', { json: { receiptKey: disposable.objectKey } }), 204);
+    expect('unsubmitted payment receipt deletion is blocked', await request('delete-disposable-receipt', actors.student, 'DELETE', '/bookings/receipt', { json: { receiptKey: disposable.objectKey } }), 409);
     const receipt = await directUpload('student uploads booking receipt', actors.student, 'payment-receipt', assets.receipt);
     const booking = expect('student creates booking', await request('create-booking', actors.student, 'POST', '/bookings', { json: { moduleId: ids.mainModule, receiptKey: receipt.objectKey } }), 201);
     ids.booking = booking.id;

@@ -2,7 +2,7 @@ import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
 import { flashcards, lectures, userFlashcardState } from '../db/schema';
-import { badRequest, notFound } from '../lib/errors';
+import { badRequest, notFound, unauthorized } from '../lib/errors';
 import { flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam } from '../lib/validation';
 import { deletePrivateObjects } from '../lib/storage';
 import { createPresignedDownload } from '../lib/presigned-uploads';
@@ -132,15 +132,17 @@ flashcardRoutes.put('/flashcards/:flashcardId/state', async (c) => {
   if (!await database.query.flashcards.findFirst({ where: eq(flashcards.id, flashcardId) })) throw notFound('Flashcard not found');
   const now = new Date();
   const values = { userId: c.get('user').id, flashcardId, knowledge: input.knowledge ?? null, hidden: input.hidden ?? false, viewedAt: input.viewed ? now : null, updatedAt: now };
-  await database.insert(userFlashcardState).values(values).onConflictDoUpdate({
-    target: [userFlashcardState.userId, userFlashcardState.flashcardId],
-    set: {
-      ...(input.knowledge !== undefined ? { knowledge: input.knowledge } : {}),
-      ...(input.hidden !== undefined ? { hidden: input.hidden } : {}),
-      ...(input.viewed ? { viewedAt: now } : {}),
-      updatedAt: now,
-    },
-  });
+  const result = await c.env.DB.prepare(`INSERT INTO user_flashcard_state
+    (user_id, flashcard_id, knowledge, hidden, viewed_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND deletion_requested_at IS NULL)
+    ON CONFLICT(user_id, flashcard_id) DO UPDATE SET
+      knowledge = CASE WHEN ? THEN excluded.knowledge ELSE user_flashcard_state.knowledge END,
+      hidden = CASE WHEN ? THEN excluded.hidden ELSE user_flashcard_state.hidden END,
+      viewed_at = CASE WHEN ? THEN excluded.viewed_at ELSE user_flashcard_state.viewed_at END,
+      updated_at = excluded.updated_at`)
+    .bind(values.userId, flashcardId, values.knowledge, Number(values.hidden), values.viewedAt?.getTime() ?? null,
+      now.getTime(), values.userId, Number(input.knowledge !== undefined), Number(input.hidden !== undefined), Number(!!input.viewed)).run();
+  if (!result.meta.changes) throw unauthorized('This account is being deleted');
   return c.json({ data: { ...values, ...input, updatedAt: now } });
 });
 

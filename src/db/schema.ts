@@ -20,8 +20,21 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
   role: text('role', { enum: ['USER', 'ADMIN', 'SUPER_ADMIN'] }).notNull().default('USER'),
+  deletionRequestedAt: integer('deletion_requested_at', { mode: 'timestamp_ms' }),
   ...timestamps,
 }, (table) => [check('users_role_check', sql`${table.role} IN ('USER', 'ADMIN', 'SUPER_ADMIN')`)]);
+
+// No foreign key: jobs survive removal of the account they are cleaning up.
+export const accountDeletionJobs = sqliteTable('account_deletion_jobs', {
+  firebaseUid: text('firebase_uid').primaryKey(),
+  userId: text('user_id').notNull(),
+  requestedAt: integer('requested_at', { mode: 'timestamp_ms' }).notNull(),
+  firebaseDeletedAt: integer('firebase_deleted_at', { mode: 'timestamp_ms' }),
+  completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp_ms' }).notNull(),
+  lastError: text('last_error'),
+}, (table) => [index('account_deletion_jobs_retry_idx').on(table.completedAt, table.nextAttemptAt)]);
 
 export const modules = sqliteTable('modules', {
   id: text('id').primaryKey(),
@@ -63,7 +76,7 @@ export const lectureMaterials = sqliteTable('lecture_materials', {
 
 export const bookingRequests = sqliteTable('booking_requests', {
   id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
   moduleId: text('module_id').notNull().references(() => modules.id, { onDelete: 'cascade' }),
   receiptKey: text('receipt_key').notNull().unique(),
   receiptFilename: text('receipt_filename').notNull(),

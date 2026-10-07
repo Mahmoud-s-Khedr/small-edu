@@ -95,7 +95,7 @@ type Material = {
 
 type Booking = {
   id: string;
-  userId: string;
+  userId: string | null; // Null after account deletion.
   moduleId: string;
   receiptFilename: string;
   receiptContentType: string;
@@ -430,6 +430,19 @@ type Path = { lectureId: string };
 type Response = Success<{ videoUrl: string }>;
 ```
 
+### `DELETE /me`
+
+Requires a verified Firebase bearer token and recent sign-in (five minutes).
+Accepts no deletion target in the request. Returns `202` with
+`Success<{ status: 'pending' | 'completed' }>` after durable acceptance.
+`401 REAUTHENTICATION_REQUIRED` requires Firebase reauthentication.
+
+Firebase and local account deletion runs in the background with scheduled retries.
+Bookings survive with `userId: null`; all R2 payment receipts are retained.
+Module access and flashcard progress are removed. A new Firebase UID may register
+using the same email after completion and receives a fresh `USER` account.
+See [account deletion](docs/account-deletion.md) for configuration and retry behavior.
+
 ## Bookings
 
 ### Payment-receipt upload
@@ -441,17 +454,17 @@ types are `application/pdf`, `image/jpeg`, and `image/png`; completion returns
 Keep the returned `objectKey`: it is required when creating the booking and is
 accepted only if it belongs to the authenticated user.
 
-Unsubmitted receipt uploads are removed after 24 hours by the scheduled Worker
-cleanup. A client can discard one immediately with the endpoint below.
+All payment receipts are retained, including unsubmitted uploads and receipts
+for deleted accounts. No scheduled receipt cleanup runs.
 
 ### `DELETE /bookings/receipt`
 
-Deletes an unsubmitted receipt owned by the authenticated user. Submitted
-receipts are retained for the booking-review record.
+Compatibility endpoint: receipt deletion is disabled. Owned receipts return
+`409 CONFLICT` and remain in R2, regardless of booking submission status.
 
 ```ts
 type Body = { receiptKey: string };
-// 204 No Content
+// 409 CONFLICT — payment receipts are retained
 ```
 
 ### `POST /bookings`
@@ -462,7 +475,7 @@ booking per user/module is allowed.
 ```ts
 type Body = {
   moduleId: string;
-  receiptKey: string; // objectKey returned by POST /bookings/receipt
+  receiptKey: string; // objectKey returned by POST /uploads/complete
 };
 
 // 201

@@ -1,5 +1,8 @@
 import migration from '../drizzle/0000_initial.sql?raw';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
+import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
+import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion } from '../src/lib/account-deletion';
+import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
 import { verifyFirebaseIdToken } from '../src/middleware/auth';
@@ -17,6 +20,9 @@ const seedSubjects = new Map([
   [adminId, 'seed-admin'],
   [superAdminId, 'seed-super-admin'],
 ]);
+let deletionMode: 'success' | 'missing' | 'fail' | 'oauth-fail' = 'fail';
+let deletedUids: string[] = [];
+let oauthAssertions: string[] = [];
 let authTokens = new Map<string, string>();
 
 const auth = (id: string) => {
@@ -70,23 +76,54 @@ beforeAll(async () => {
   firebasePrivateKey = pair.privateKey;
   firebaseKid = 'firebase-test-key';
   const publicJwk = await exportJWK(pair.publicKey);
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url === 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com') {
       return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: firebaseKid, use: 'sig', alg: 'RS256' }] }), {
         headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' },
       });
     }
+    if (url === 'https://oauth2.googleapis.com/token') {
+      oauthAssertions.push(new URLSearchParams(String(init?.body)).get('assertion')!);
+      return Response.json(deletionMode === 'oauth-fail' ? { error: 'invalid_grant' } : { access_token: 'test-access-token' },
+        { status: deletionMode === 'oauth-fail' ? 400 : 200 });
+    }
+    if (url === 'https://identitytoolkit.googleapis.com/v1/projects/medly-test/accounts:delete') {
+      deletedUids.push(JSON.parse(String(init?.body)).localId);
+      return Response.json(deletionMode === 'success' ? {} : { error: { message: deletionMode === 'missing' ? 'USER_NOT_FOUND' : 'PERMISSION_DENIED' } },
+        { status: deletionMode === 'success' ? 200 : deletionMode === 'missing' ? 400 : 403 });
+    }
     throw new Error(`Unexpected fetch: ${url}`);
   }));
   await env.DB.batch(migration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(identityMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  // Exercise the new migration against populated tables, not only an empty DB.
+  await seed();
+  const migrationTime = Date.now();
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(moduleId, 'Migration course', '1', '2026', 'Spring', migrationTime, migrationTime),
+    env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind('migration-booking', userId, moduleId, 'payment-receipts/migration.pdf', 'migration.pdf', 'application/pdf', 1, migrationTime, migrationTime),
+    env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(userId, moduleId, migrationTime),
+  ]);
+  await env.DB.batch(deletionMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  expect(await env.DB.prepare('SELECT user_id, receipt_key FROM booking_requests WHERE id = ?').bind('migration-booking').first())
+    .toEqual({ user_id: userId, receipt_key: 'payment-receipts/migration.pdf' });
+  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+  expect(await env.DB.prepare('SELECT user_id, receipt_key FROM booking_requests WHERE id = ?').bind('migration-booking').first())
+    .toEqual({ user_id: null, receipt_key: 'payment-receipts/migration.pdf' });
+  expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
 });
 
 afterAll(() => vi.unstubAllGlobals());
 
 beforeEach(async () => {
+  deletionMode = 'fail';
+  deletedUids = [];
+  oauthAssertions = [];
   await env.DB.batch([
-    'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
+    'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
   await seed();
   authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
@@ -105,6 +142,7 @@ describe('Medly API', () => {
     expect(spec.status).toBe(200);
     const document = await spec.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
     expect(document.paths).toHaveProperty('/modules');
+    expect(document.paths['/me']).toHaveProperty('delete.responses.202');
     expect(document.paths).toHaveProperty('/lectures/{lectureId}/mcqs');
     expect(document.components.schemas).toHaveProperty('Module');
   });
@@ -135,6 +173,151 @@ describe('Medly API', () => {
     expect(invalid.status).toBe(422);
     const otherUser = await request('/api/v1/me', { headers: auth(secondUserId) });
     expect((await otherUser.json() as { data: { name: string } }).data.name).toBe('Other Student');
+  });
+
+  it('rejects anonymous and stale account deletion without changing the account', async () => {
+    expect((await request('/api/v1/me', { method: 'DELETE' })).status).toBe(401);
+    const stale = await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 301 }, {}, { subject: 'seed-student' });
+    const response = await request('/api/v1/me', { method: 'DELETE', headers: { Authorization: `Bearer ${stale}` } });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: { code: 'REAUTHENTICATION_REQUIRED' } });
+    expect(await env.DB.prepare('SELECT * FROM account_deletion_jobs').all()).toMatchObject({ results: [] });
+    expect((await request('/api/v1/me', { headers: auth(userId) })).status).toBe(200);
+  });
+
+  it('accepts only the caller’s deletion, blocks access, and retries failures durably', async () => {
+    const response = await json('/api/v1/me', 'DELETE', { userId: secondUserId }, userId);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ data: { status: 'pending' } });
+    await vi.waitFor(async () => {
+      expect(await env.DB.prepare('SELECT last_error FROM account_deletion_jobs WHERE firebase_uid = ?')
+        .bind('seed-student').first()).toEqual({ last_error: 'FIREBASE_DELETE_FAILED' });
+    });
+    expect(deletedUids).toEqual(['seed-student']);
+    expect((await request('/api/v1/me', { headers: auth(userId) })).status).toBe(401);
+    expect((await request('/api/v1/me', { headers: auth(secondUserId) })).status).toBe(200);
+    expect((await request('/api/v1/auth/session', { method: 'POST', headers: auth(userId) })).status).toBe(409);
+    expect((await request('/api/v1/me', { method: 'DELETE', headers: auth(userId) })).status).toBe(202);
+    expect((await env.DB.prepare('SELECT count(*) AS total FROM account_deletion_jobs').first())).toEqual({ total: 1 });
+    await retryAccountDeletions(env); // Backoff prevents immediate provider hammering.
+    expect(deletedUids).toHaveLength(1);
+    deletionMode = 'missing'; // Firebase already deleted the identity on an earlier attempt.
+    await env.DB.prepare('UPDATE account_deletion_jobs SET next_attempt_at = 0').run();
+    await retryAccountDeletions(env);
+    expect(await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first()).toBeNull();
+    expect(await env.DB.prepare('SELECT completed_at, last_error FROM account_deletion_jobs').first())
+      .toEqual({ completed_at: expect.any(Number), last_error: null });
+    const completed = await request('/api/v1/me', { method: 'DELETE', headers: auth(userId) });
+    expect(completed.status).toBe(202);
+    expect(await completed.json()).toEqual({ data: { status: 'completed' } });
+    expect((await request('/api/v1/auth/session', { method: 'POST', headers: auth(userId) })).status).toBe(409);
+  });
+
+  it('preserves receipts and bookings, removes personal progress, and permits fresh signup with the same email', async () => {
+    const now = Date.now();
+    const cardId = '55555555-5555-4555-8555-555555555555';
+    const bookingId = '66666666-6666-4666-8666-666666666666';
+    const key = `payment-receipts/${userId}/retained.pdf`;
+    const abandonedKey = `payment-receipts/${userId}/unsubmitted.pdf`;
+    await env.STORAGE.put(key, 'retained receipt');
+    await env.STORAGE.put(abandonedKey, 'unsubmitted receipt');
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(moduleId, 'Anatomy', '1', '2026', 'Spring', now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(lectureId, moduleId, 'Bones', 'Anatomy', now, 'https://example.test/video', now, now),
+      env.DB.prepare('INSERT INTO flashcards (id, lecture_id, front_text, back_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(cardId, lectureId, 'Front', 'Back', now, now),
+      env.DB.prepare('INSERT INTO user_flashcard_state (user_id, flashcard_id, knowledge, updated_at) VALUES (?, ?, ?, ?)')
+        .bind(userId, cardId, 'KNOWN', now),
+      env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(userId, moduleId, now),
+      env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(bookingId, userId, moduleId, key, 'retained.pdf', 'application/pdf', 16, now, now),
+    ]);
+    deletionMode = 'success';
+    expect((await request('/api/v1/me', { method: 'DELETE', headers: auth(userId) })).status).toBe(202);
+    await vi.waitFor(async () => {
+      expect(await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first()).toBeNull();
+    });
+    expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
+    expect(await env.DB.prepare('SELECT * FROM user_flashcard_state WHERE user_id = ?').bind(userId).first()).toBeNull();
+    expect(await env.DB.prepare('SELECT user_id, receipt_key, status FROM booking_requests WHERE id = ?').bind(bookingId).first())
+      .toEqual({ user_id: null, receipt_key: key, status: 'PENDING' });
+    expect(await env.STORAGE.head(key)).not.toBeNull();
+    expect(await env.STORAGE.head(abandonedKey)).not.toBeNull();
+    expect((await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId) })).status).toBe(200);
+    const decision = await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' });
+    expect(decision.status).toBe(200);
+    expect(await decision.json()).toMatchObject({ data: { userId: null, status: 'ACCEPTED' } });
+    expect(await env.DB.prepare('SELECT * FROM module_access').all()).toMatchObject({ results: [] });
+    expect(await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first()).not.toBeNull();
+    const freshToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'new-firebase-uid' });
+    const fresh = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${freshToken}` } });
+    expect(fresh.status).toBe(200);
+    const payload = await fresh.json() as { data: { created: boolean; user: { id: string; role: string } } };
+    expect(payload.data.created).toBe(true);
+    expect(payload.data.user.id).not.toBe(userId);
+    expect(payload.data.user.role).toBe('USER');
+    expect(await (await request('/api/v1/bookings', { headers: { Authorization: `Bearer ${freshToken}` } })).json()).toEqual({ data: [] });
+    expect(await env.DB.prepare('SELECT user_id FROM booking_requests WHERE id = ?').bind(bookingId).first()).toEqual({ user_id: null });
+  });
+
+  it('retains unsubmitted receipts and disables the former receipt deletion endpoint', async () => {
+    const key = `payment-receipts/${userId}/cannot-delete.pdf`;
+    await env.STORAGE.put(key, 'receipt');
+    expect((await json('/api/v1/bookings/receipt', 'DELETE', { receiptKey: key }, userId)).status).toBe(409);
+    await retryAccountDeletions(env);
+    expect(await env.STORAGE.head(key)).not.toBeNull();
+  });
+
+  it('does not mark accounts when Firebase deletion credentials are missing', async () => {
+    await expect(requestAccountDeletion({ ...env, FIREBASE_PRIVATE_KEY: undefined },
+      { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) }))
+      .rejects.toMatchObject({ status: 503 });
+    expect(await env.DB.prepare('SELECT deletion_requested_at FROM users WHERE id = ?').bind(userId).first())
+      .toEqual({ deletion_requested_at: null });
+  });
+
+  it('retries a failed D1 cleanup without repeating successful Firebase deletion', async () => {
+    const identity = { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) };
+    await requestAccountDeletion(env, identity);
+    deletionMode = 'success';
+    await env.DB.prepare("CREATE TRIGGER prevent_account_delete BEFORE DELETE ON users BEGIN SELECT RAISE(FAIL, 'test storage failure'); END").run();
+    try {
+      await processAccountDeletion(env, identity.subject);
+      expect(await env.DB.prepare('SELECT firebase_deleted_at, completed_at, last_error FROM account_deletion_jobs').first())
+        .toEqual({ firebase_deleted_at: expect.any(Number), completed_at: null, last_error: 'LOCAL_DELETE_FAILED' });
+      expect(await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first()).not.toBeNull();
+    } finally {
+      await env.DB.prepare('DROP TRIGGER prevent_account_delete').run();
+    }
+    await env.DB.prepare('UPDATE account_deletion_jobs SET next_attempt_at = 0').run();
+    await retryAccountDeletions(env);
+    expect(deletedUids).toEqual(['seed-student']);
+    expect(await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first()).toBeNull();
+  });
+
+  it('leases concurrent jobs, sanitizes OAuth errors, and removes only expired completed tombstones', async () => {
+    const identity = { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) };
+    await Promise.all([requestAccountDeletion(env, identity), requestAccountDeletion(env, identity)]);
+    deletionMode = 'oauth-fail';
+    await Promise.all([processAccountDeletion(env, identity.subject), processAccountDeletion(env, identity.subject)]);
+    expect(oauthAssertions).toHaveLength(1);
+    expect(decodeJwt(oauthAssertions[0]!)).toMatchObject({
+      iss: 'deletion-test@medly-test.iam.gserviceaccount.com', aud: 'https://oauth2.googleapis.com/token',
+      scope: 'https://www.googleapis.com/auth/identitytoolkit', iat: expect.any(Number), exp: expect.any(Number),
+    });
+    expect(deletedUids).toHaveLength(0);
+    expect(await env.DB.prepare('SELECT attempts, last_error FROM account_deletion_jobs').first())
+      .toEqual({ attempts: 1, last_error: 'FIREBASE_DELETE_FAILED' });
+    deletionMode = 'success';
+    await env.DB.prepare('UPDATE account_deletion_jobs SET next_attempt_at = 0').run();
+    await retryAccountDeletions(env);
+    await retryAccountDeletions(env);
+    expect(await env.DB.prepare('SELECT firebase_uid FROM account_deletion_jobs').first()).not.toBeNull();
+    await env.DB.prepare('UPDATE account_deletion_jobs SET completed_at = ?').bind(Date.now() - 66 * 60 * 1000).run();
+    await retryAccountDeletions(env);
+    expect(await env.DB.prepare('SELECT firebase_uid FROM account_deletion_jobs').first()).toBeNull();
   });
 
   it('performs admin module CRUD and restricts regular users', async () => {
@@ -297,6 +480,9 @@ describe('Medly API', () => {
       env.DB.prepare('INSERT INTO flashcards (id, lecture_id, front_text, back_text, ordering, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(cardId, lectureId, 'Q', 'A', 0, now, now),
     ]);
     expect((await json(`/api/v1/flashcards/${cardId}/state`, 'PUT', { knowledge: 'KNOWN', hidden: true }, userId)).status).toBe(200);
+    expect((await json(`/api/v1/flashcards/${cardId}/state`, 'PUT', { viewed: true }, userId)).status).toBe(200);
+    expect(await env.DB.prepare('SELECT knowledge, hidden, viewed_at FROM user_flashcard_state WHERE user_id = ? AND flashcard_id = ?')
+      .bind(userId, cardId).first()).toEqual({ knowledge: 'KNOWN', hidden: 1, viewed_at: expect.any(Number) });
     expect((await request(`/api/v1/lectures/${lectureId}/flashcards`, { headers: auth(userId) })).status).toBe(200);
     const other = await request(`/api/v1/lectures/${lectureId}/flashcards`, { headers: auth(secondUserId) });
     expect((await other.json() as { data: unknown[] }).data).toHaveLength(1);

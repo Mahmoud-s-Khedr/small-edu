@@ -1,7 +1,8 @@
 import { cors } from 'hono/cors';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { swaggerUI } from '@hono/swagger-ui';
-import { adminBookingRoutes, bookingRoutes, cleanupExpiredUnsubmittedReceipts } from './routes/bookings';
+import { adminBookingRoutes, bookingRoutes } from './routes/bookings';
+import { retryAccountDeletions } from './lib/account-deletion';
 import { authRoutes } from './routes/auth';
 import { flashcardRoutes } from './routes/flashcards';
 import { healthRoutes } from './routes/health';
@@ -48,6 +49,6 @@ app.route('/api/v1', api);
 export default {
   fetch: app.fetch,
   scheduled(_event, env, ctx) {
-    ctx.waitUntil(cleanupExpiredUnsubmittedReceipts(env));
+    ctx.waitUntil(retryAccountDeletions(env));
   },
 } satisfies ExportedHandler<Env>;

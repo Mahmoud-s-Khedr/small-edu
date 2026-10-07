@@ -8,7 +8,7 @@ Medly uses Firebase Authentication for one account with three sign-in methods:
 
 The API only accepts Firebase ID tokens with a verified email. Firebase performs
 password handling, OAuth, token refresh, and password reset. The Cloudflare
-Worker never receives a password and does not store a Firebase service-account
+Worker never receives a password. Account deletion uses a server-side service-account
 key.
 
 ## Architecture and client contract
@@ -45,7 +45,10 @@ The client must follow this sequence after every interactive sign-in:
    only when creating the local account. This is provisioning, not a cookie session.
 4. Retain no application auth token of its own. For every API request, get a
    current Firebase ID token (Firebase refreshes it) and send it as a Bearer token.
-5. On `401`, refresh the Firebase ID token once and retry once. If that fails,
+5. On `401 REAUTHENTICATION_REQUIRED` from account deletion, reauthenticate with
+   Firebase; refreshing the token alone does not reset the sign-in time. For
+   other `401` responses, refresh the Firebase ID token once and retry once.
+   If that fails,
    sign the person out and return to the sign-in screen. On `409` from
    `/auth/session`, show account-support guidance; do not create a second local
    profile.
@@ -90,6 +93,9 @@ Use the Firebase SDK for the selected client platform. The UI needs these paths:
   has no reset endpoint.
 - **Continue with Google / Apple:** use the platform-native Firebase provider
   flow. On web, prefer redirect over pop-up on mobile browsers.
+- **Delete account:** confirm deletion, reauthenticate if required, call
+  `DELETE /me`, then sign out and clear local data after `202`. Preserve payment
+  records on the server; see [account deletion](account-deletion.md).
 - **Sign out:** call Firebase sign-out and clear only local cached application
   data that should not be visible to the next device user.
 - **Manage sign-in methods:** show the methods from Firebase `providerData` and
@@ -157,7 +163,8 @@ Apple sign-in requires active Apple Developer Program membership.
 ## What must not be added to this Worker
 
 - Passwords, password hashes, or a custom password-reset endpoint.
-- A Firebase service-account JSON credential.
+- A committed Firebase service-account credential. Deletion uses Worker secrets
+  `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY`; see [account deletion](account-deletion.md).
 - The Firebase web API key as a Worker secret.
 - Firebase custom claims as a way to grant `ADMIN`.
 - An application-issued browser cookie or duplicate long-lived session token.
@@ -167,6 +174,8 @@ Apple sign-in requires active Apple Developer Program membership.
 - [ ] Sign up with email/password; verify the address; provision the API account.
 - [ ] Confirm an unverified email/password account receives `401` from the API.
 - [ ] Reset password and confirm the new password signs in.
+- [ ] Delete a disposable account, confirm receipts/bookings remain, and register
+      again with the same email as a fresh account.
 - [ ] Sign in with Google and provision the API account.
 - [ ] Sign in with Apple using both shared and private-relay email options.
 - [ ] Confirm Apple verification/reset email is delivered through private relay.

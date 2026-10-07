@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import type { MiddlewareHandler } from 'hono';
 import { db } from '../db/client';
@@ -18,12 +18,14 @@ export type FirebaseIdentity = {
   subject: string;
   email: string;
   name?: string;
+  authTime: number;
 };
 
 /**
  * Verifies the Firebase ID token issued by the project's securetoken issuer.
  * OAuth/Google sign-in itself happens in the client Firebase SDK; a Worker
- * never needs a Firebase service-account credential or a client API key.
+ * needs only public keys for verification. Account deletion separately uses
+ * server-side credentials; a client API key is not needed.
  */
 export async function verifyFirebaseIdToken(
   token: string,
@@ -52,6 +54,7 @@ export async function verifyFirebaseIdToken(
 
     return {
       subject: payload.sub,
+      authTime: payload.auth_time,
       email: payload.email,
       name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : undefined,
     };
@@ -65,7 +68,7 @@ export async function verifyFirebaseIdToken(
 export async function resolveUser(token: string, env: Env): Promise<AuthUser | null> {
   const identity = await verifyFirebaseIdToken(token, env);
   if (!identity) return null;
-  const user = await db(env.DB).query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
+  const user = await db(env.DB).query.users.findFirst({ where: and(eq(users.externalSubject, identity.subject), isNull(users.deletionRequestedAt)) });
   return user ? { id: user.id, email: user.email, name: user.name, role: user.role } : null;
 }
 

@@ -110,6 +110,32 @@ type Body = { name: string }; // Trimmed, 1–100 characters
 type Response = Success<User>;
 ```
 
+## `DELETE /me`
+
+**Job:** durably request deletion of the authenticated Firebase/local account.
+No target user ID, email, or request body is accepted as a deletion target.
+New requests require a verified Firebase token with sign-in within five minutes.
+
+**Expected response — `202 Accepted`:**
+
+```ts
+type Response = Success<{ status: 'pending' | 'completed' }>;
+```
+
+On acceptance, clear the local session and sign out of Firebase. Processing and
+retries continue in the Worker. A valid token for the same UID can safely retry
+an accepted request after the local account is blocked or removed.
+
+**Errors:** `401 REAUTHENTICATION_REQUIRED` means reauthenticate with Firebase
+and obtain a fresh token; token refresh alone is insufficient. `401 UNAUTHORIZED`
+means invalid authentication or no linked local account. `503 SERVICE_UNAVAILABLE`
+means server deletion credentials are missing and the account was not changed.
+
+`/auth/session` returns `409` for a pending/deleted UID. After deletion completes,
+signing up with the same email produces a new UID/local account with `USER` role.
+Payment receipts and bookings remain separate; previous access/progress is lost.
+See [the account deletion runbook](../account-deletion.md).
+
 ## `GET /admin/users` — Super admin only
 
 **Job:** lists local users for the super-admin role-management screen.

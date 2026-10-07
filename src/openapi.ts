@@ -14,7 +14,7 @@ const user = z.object({ id: uuid, email: z.string().email(), name: z.string(), r
 const moduleDto = moduleInput.extend({ id: uuid, createdAt: dateTime, updatedAt: dateTime }).openapi('Module');
 const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, createdAt: dateTime, updatedAt: dateTime, videoLocked: z.boolean().optional() }).openapi('Lecture');
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Material');
-const booking = z.object({ id: uuid, userId: uuid, moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
+const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
 const flashcard = z.object({ id: uuid, lectureId: uuid, frontText: z.string().nullable(), backText: z.string().nullable(), frontImageUrl: z.string().nullable(), backImageUrl: z.string().nullable(), ordering: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Flashcard');
 const mcq = z.object({ id: uuid, lectureId: uuid, questionText: z.string(), ordering: z.number().int(), choices: z.array(z.object({ id: uuid, choiceText: z.string(), isCorrect: z.boolean(), ordering: z.number().int() })) }).openapi('Mcq');
 const upload = z.object({ objectKey: z.string(), filename: z.string(), contentType: z.string(), sizeBytes: z.number().int() }).openapi('Upload');
@@ -87,6 +87,14 @@ secured('post', '/auth/session', ['Authentication'], 'Create or link the authent
 secured('get', '/me', ['Authentication'], 'Get the current local user', envelope(user));
 secured('patch', '/me', ['Authentication'], 'Update the current user’s display name', envelope(user), { body: { content: { 'application/json': { schema: profileUpdateInput.openapi('ProfileUpdateInput') } } } });
 
+add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete the authenticated account; retain payment receipts and bookings', security: auth,
+  responses: {
+    202: { description: 'Deletion accepted (or already completed)', content: { 'application/json': { schema: envelope(z.object({ status: z.enum(['pending', 'completed']) })) } } },
+    401: { description: 'Invalid token or recent reauthentication required', content: { 'application/json': { schema: error } } },
+    503: { description: 'Firebase account deletion is not configured', content: { 'application/json': { schema: error } } },
+  },
+});
+
   secured('get', '/modules', ['Modules'], 'List modules', paginated(moduleDto), { query: z.object({ page: z.string().optional(), pageSize: z.string().optional(), number: z.string().optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
   secured('post', '/modules', ['Modules'], 'Create a module (admin)', envelope(moduleDto), { body: { content: { 'application/json': { schema: moduleInput } } } }, 201);
   secured('get', '/modules/{moduleId}', ['Modules'], 'Get a module', envelope(moduleDto), { params: moduleIdParam });
@@ -105,7 +113,7 @@ secured('patch', '/me', ['Authentication'], 'Update the current user’s display
   noContent('delete', '/lectures/{lectureId}/materials/{materialId}', ['Lectures'], 'Delete a lecture material (admin)', { params: lectureIdParam.extend({ materialId: uuid }) });
   secured('get', '/lectures/{lectureId}/video', ['Lectures'], 'Get a lecture video URL when access is granted', envelope(z.object({ videoUrl: z.string().url() })), { params: lectureIdParam });
 
-  noContent('delete', '/bookings/receipt', ['Bookings'], 'Delete an unsubmitted receipt', { body: { content: { 'application/json': { schema: z.object({ receiptKey: z.string() }) } } } });
+  add({ method: 'delete', path: '/bookings/receipt', tags: ['Bookings'], summary: 'Receipt deletion disabled; payment receipts are retained', security: auth, responses: { 409: { description: 'Payment receipts cannot be deleted', content: { 'application/json': { schema: error } } }, 401: { description: 'Authentication required', content: { 'application/json': { schema: error } } } }, request: { body: { content: { 'application/json': { schema: z.object({ receiptKey: z.string() }) } } } } });
   secured('post', '/bookings', ['Bookings'], 'Create a booking request', envelope(booking), { body: { content: { 'application/json': { schema: z.object({ moduleId: uuid, receiptKey: z.string() }) } } } }, 201);
   secured('get', '/bookings', ['Bookings'], 'List the current user’s booking requests', envelope(z.array(booking)));
   secured('get', '/admin/bookings', ['Admin'], 'List booking requests (admin)', paginated(booking));
