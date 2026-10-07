@@ -21,8 +21,17 @@ export const authRoutes = new ApiRouter<AppBindings>('/auth');
 authRoutes.post('/session', async (c) => {
   const value = c.req.header('Authorization');
   if (!value?.startsWith('Bearer ')) throw unauthorized();
-  const identity = await verifyFirebaseIdToken(value.slice(7), c.env);
+  // Session provisioning needs to distinguish an otherwise-valid unverified
+  // Firebase token so the client can offer a resend-verification action.
+  const identity = await verifyFirebaseIdToken(value.slice(7), c.env, undefined, { requireVerifiedEmail: false });
   if (!identity) throw unauthorized('Invalid or expired Firebase ID token');
+  if (!identity.emailVerified) {
+    return c.json({ error: {
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Verify your email address before creating a session',
+      email_verified: false,
+    } }, 401);
+  }
   const { name } = c.req.header('Content-Type')?.includes('application/json')
     ? authSessionInput.parse(await c.req.json())
     : {};

@@ -31,7 +31,7 @@ const uploadCompletion = z.discriminatedUnion('purpose', [
   completedUpload.extend({ purpose: z.literal('flashcard-image'), lectureId: uuid }),
   completedUpload.extend({ purpose: z.literal('payment-receipt') }),
 ]).openapi('UploadCompletion');
-const error = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) }).openapi('ApiError');
+const error = z.object({ error: z.object({ code: z.string(), message: z.string(), email_verified: z.boolean().optional(), details: z.unknown().optional() }) }).openapi('ApiError');
 const envelope = <T extends z.ZodType>(data: T) => z.object({ data });
 const paginated = <T extends z.ZodType>(data: T) => z.object({ data: z.array(data), meta: z.object({ page: z.number().int(), pageSize: z.number().int(), limit: z.number().int(), offset: z.number().int(), total: z.number().int() }) });
 const responses = (schema: z.ZodType, status: 200 | 201 = 200, description = 'Successful response') => ({

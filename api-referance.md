@@ -173,7 +173,14 @@ type Response = Success<{ user: User; created: boolean; email_verified: true }>;
 ```
 
 `email_verified` is always `true` in a successful response: unverified Firebase
-ID tokens are rejected before session provisioning.
+ID tokens return this response instead:
+
+```json
+{ "error": { "code": "EMAIL_NOT_VERIFIED", "email_verified": false } }
+```
+
+The response status is `401`; tokens with an invalid signature, issuer, audience,
+or expiry remain indistinguishable generic authorization failures.
 
 If the Firebase UID is already linked, the existing local user is returned
 unchanged. A legacy user with the same verified email and no linked Firebase UID

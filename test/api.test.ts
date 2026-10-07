@@ -275,14 +275,14 @@ describe('Medly API', () => {
 
   it('does not mark accounts when Firebase deletion credentials are missing', async () => {
     await expect(requestAccountDeletion({ ...env, FIREBASE_PRIVATE_KEY: undefined },
-      { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) }))
+      { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) }))
       .rejects.toMatchObject({ status: 503 });
     expect(await env.DB.prepare('SELECT deletion_requested_at FROM users WHERE id = ?').bind(userId).first())
       .toEqual({ deletion_requested_at: null });
   });
 
   it('retries a failed D1 cleanup without repeating successful Firebase deletion', async () => {
-    const identity = { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) };
+    const identity = { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) };
     await requestAccountDeletion(env, identity);
     deletionMode = 'success';
     await env.DB.prepare("CREATE TRIGGER prevent_account_delete BEFORE DELETE ON users BEGIN SELECT RAISE(FAIL, 'test storage failure'); END").run();
@@ -301,7 +301,7 @@ describe('Medly API', () => {
   });
 
   it('leases concurrent jobs, sanitizes OAuth errors, and removes only expired completed tombstones', async () => {
-    const identity = { subject: 'seed-student', email: 'student@example.test', authTime: Math.floor(Date.now() / 1000) };
+    const identity = { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) };
     await Promise.all([requestAccountDeletion(env, identity), requestAccountDeletion(env, identity)]);
     deletionMode = 'oauth-fail';
     await Promise.all([processAccountDeletion(env, identity.subject), processAccountDeletion(env, identity.subject)]);
@@ -590,6 +590,9 @@ describe('Medly API', () => {
     expect(await verifyFirebaseIdToken(await firebaseToken({}, { kid: 'unknown-key' }), env)).toBeNull();
     expect(await verifyFirebaseIdToken('not-a-jwt', env)).toBeNull();
     expect(await verifyFirebaseIdToken(await firebaseToken({ email_verified: false }), env)).toBeNull();
+    expect(await verifyFirebaseIdToken(
+      await firebaseToken({ email_verified: false }), env, undefined, { requireVerifiedEmail: false },
+    )).toMatchObject({ emailVerified: false });
     expect(await verifyFirebaseIdToken(await firebaseToken({ auth_time: undefined }), env)).toBeNull();
     expect(await verifyFirebaseIdToken(await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) + 3600 }), env)).toBeNull();
 
@@ -674,6 +677,19 @@ describe('Medly API', () => {
     const legacy = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${legacyToken}` } });
     expect(await legacy.json()).toMatchObject({ data: { created: false, user: { id: userId, role: 'USER', name: 'Student' } } });
     expect((await env.DB.prepare('SELECT external_subject AS subject FROM users WHERE id = ?').bind(userId).first<{ subject: string }>())?.subject).toBe('legacy-firebase-user');
+  });
+
+  it('reports a valid but unverified Firebase email without provisioning an account', async () => {
+    const response = await request('/api/v1/auth/session', {
+      method: 'POST', headers: { Authorization: `Bearer ${await firebaseToken({ email_verified: false })}` },
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: {
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Verify your email address before creating a session',
+      email_verified: false,
+    } });
+    expect(await env.DB.prepare('SELECT * FROM users WHERE external_subject = ?').bind('firebase-user-1').first()).toBeNull();
   });
 
   it('rejects conflicting Firebase email links and keeps Firebase roles in D1', async () => {

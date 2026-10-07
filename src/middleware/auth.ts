@@ -17,8 +17,14 @@ const firebaseJwks = createRemoteJWKSet(FIREBASE_JWKS_URL);
 export type FirebaseIdentity = {
   subject: string;
   email: string;
+  emailVerified: boolean;
   name?: string;
   authTime: number;
+};
+
+type VerifyFirebaseIdTokenOptions = {
+  /** Defaults to true so application routes never accept an unverified address. */
+  requireVerifiedEmail?: boolean;
 };
 
 /**
@@ -31,6 +37,7 @@ export async function verifyFirebaseIdToken(
   token: string,
   env: Env,
   keyResolver: JWTVerifyGetKey = firebaseJwks,
+  options: VerifyFirebaseIdTokenOptions = {},
 ): Promise<FirebaseIdentity | null> {
   const projectId = env.FIREBASE_PROJECT_ID;
   if (!projectId) return null;
@@ -50,12 +57,15 @@ export async function verifyFirebaseIdToken(
     if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat) || payload.iat > nowSeconds + 300) return null;
     if (typeof payload.auth_time !== 'number' || !Number.isFinite(payload.auth_time) || payload.auth_time > nowSeconds) return null;
     if (typeof payload.sub !== 'string' || payload.sub.trim().length === 0) return null;
-    if (typeof payload.email !== 'string' || payload.email.trim().length === 0 || payload.email_verified !== true) return null;
+    if (typeof payload.email !== 'string' || payload.email.trim().length === 0) return null;
+    const emailVerified = payload.email_verified === true;
+    if (options.requireVerifiedEmail !== false && !emailVerified) return null;
 
     return {
       subject: payload.sub,
       authTime: payload.auth_time,
       email: payload.email,
+      emailVerified,
       name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : undefined,
     };
   } catch {
