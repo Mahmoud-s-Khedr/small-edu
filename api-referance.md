@@ -357,6 +357,7 @@ type LectureListItem = Omit<Lecture, 'videoUrl'> & {
   videoLocked: boolean;
   academicYear: string;
   semester: string;
+  module: Module;
 };
 // 200
 type Response = Paginated<LectureListItem>;
@@ -373,6 +374,7 @@ type Path = { lectureId: string };
 type ResponseBody = Omit<Lecture, 'videoUrl'> & {
   videoUrl: string | null;
   videoLocked: boolean;
+  module: Module;
 };
 
 // 200

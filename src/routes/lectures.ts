@@ -48,7 +48,7 @@ lectureRoutes.get('/', async (c) => {
       .where(and(eq(moduleAccess.userId, user.id), inArray(moduleAccess.moduleId, moduleIds))) : []).map((access) => access.moduleId));
   return c.json({ data: items.map(({ lecture, module }) => {
     const canWatch = accessibleModuleIds.has(lecture.moduleId);
-    return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, academicYear: module.academicYear, semester: module.semester };
+    return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, academicYear: module.academicYear, semester: module.semester, module };
   }), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
@@ -58,7 +58,7 @@ lectureRoutes.get('/:lectureId', async (c) => {
     .innerJoin(modules, eq(lectures.moduleId, modules.id)).where(eq(lectures.id, lectureId)).get();
   if (!row) throw notFound('Lecture not found');
   const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), row.lecture.moduleId);
-  return c.json({ data: { ...row.lecture, videoUrl: canWatch ? row.lecture.videoUrl : null, videoLocked: !canWatch } });
+  return c.json({ data: { ...row.lecture, videoUrl: canWatch ? row.lecture.videoUrl : null, videoLocked: !canWatch, module: row.module } });
 });
 
 lectureRoutes.patch('/:lectureId', requireAdmin, async (c) => {
