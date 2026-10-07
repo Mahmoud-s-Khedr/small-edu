@@ -83,7 +83,7 @@ export class ApiRouter<E extends Env = Env> extends OpenAPIHono<E> {
 }
 
 add({ method: 'get', path: '/health', tags: ['System'], summary: 'Health check', responses: { 200: { description: 'Worker is healthy', content: { 'application/json': { schema: envelope(z.object({ status: z.literal('ok') })) } } } } });
-secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean() })), { body: { required: false, content: { 'application/json': { schema: authSessionInput.openapi('SessionInput') } } } });
+secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean(), email_verified: z.literal(true) })), { body: { required: false, content: { 'application/json': { schema: authSessionInput.openapi('SessionInput') } } } });
 secured('get', '/me', ['Authentication'], 'Get the current local user', envelope(user));
 secured('patch', '/me', ['Authentication'], 'Update the current user’s display name', envelope(user), { body: { content: { 'application/json': { schema: profileUpdateInput.openapi('ProfileUpdateInput') } } } });
 

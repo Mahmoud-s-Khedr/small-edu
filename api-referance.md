@@ -169,8 +169,11 @@ Provisions the authenticated Firebase identity as a local Medly user. Requires
 verified token; repeated calls are safe.
 
 ```ts
-type Response = Success<{ user: User; created: boolean }>;
+type Response = Success<{ user: User; created: boolean; email_verified: true }>;
 ```
+
+`email_verified` is always `true` in a successful response: unverified Firebase
+ID tokens are rejected before session provisioning.
 
 If the Firebase UID is already linked, the existing local user is returned
 unchanged. A legacy user with the same verified email and no linked Firebase UID

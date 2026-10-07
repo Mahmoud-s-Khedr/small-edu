@@ -36,7 +36,7 @@ authRoutes.post('/session', async (c) => {
   await rejectDeleting();
   const linked = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
   if (linked?.deletionRequestedAt) throw conflict('This account is being deleted');
-  if (linked) return c.json({ data: { user: asAuthUser(linked), created: false } });
+  if (linked) return c.json({ data: { user: asAuthUser(linked), created: false, email_verified: true } });
 
   const emailMatch = await database.query.users.findFirst({ where: eq(users.email, identity.email) });
   if (emailMatch) {
@@ -57,15 +57,15 @@ authRoutes.post('/session', async (c) => {
       await rejectDeleting();
       const raced = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
       if (raced?.deletionRequestedAt) throw conflict('This account is being deleted');
-      if (raced) return c.json({ data: { user: asAuthUser(raced), created: false } });
+      if (raced) return c.json({ data: { user: asAuthUser(raced), created: false, email_verified: true } });
       throw error;
     }
-    if (linkedLegacy[0]) return c.json({ data: { user: asAuthUser(linkedLegacy[0]), created: false } });
+    if (linkedLegacy[0]) return c.json({ data: { user: asAuthUser(linkedLegacy[0]), created: false, email_verified: true } });
 
     await rejectDeleting();
     const raced = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
     if (raced?.deletionRequestedAt) throw conflict('This account is being deleted');
-    if (raced) return c.json({ data: { user: asAuthUser(raced), created: false } });
+    if (raced) return c.json({ data: { user: asAuthUser(raced), created: false, email_verified: true } });
     throw conflict('This email address is already linked to a different Firebase account');
   }
 
@@ -86,14 +86,14 @@ authRoutes.post('/session', async (c) => {
       .bind(created.id, created.externalSubject, created.email, created.name, created.role,
         now.getTime(), now.getTime(), identity.subject).run();
     if (!inserted.meta.changes) throw conflict('This account is being deleted or has been deleted');
-    return c.json({ data: { user: asAuthUser(created), created: true } });
+    return c.json({ data: { user: asAuthUser(created), created: true, email_verified: true } });
   } catch (error) {
     // Unique constraints make concurrent first-login calls safe. Re-read the
     // resulting local account; a different subject for this email is a conflict.
     await rejectDeleting();
     const existing = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
     if (existing?.deletionRequestedAt) throw conflict('This account is being deleted');
-    if (existing) return c.json({ data: { user: asAuthUser(existing), created: false } });
+    if (existing) return c.json({ data: { user: asAuthUser(existing), created: false, email_verified: true } });
     const collidingEmail = await database.query.users.findFirst({ where: eq(users.email, identity.email) });
     if (collidingEmail) throw conflict('This email address is already linked to a different Firebase account');
     throw error;

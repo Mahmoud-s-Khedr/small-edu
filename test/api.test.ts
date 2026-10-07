@@ -634,13 +634,14 @@ describe('Medly API', () => {
     expect((await request('/api/v1/modules', { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
     const created = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     expect(created.status).toBe(200);
-    const createdPayload = await created.json() as { data: { user: { id: string; role: string; name: string }; created: boolean } };
+    const createdPayload = await created.json() as { data: { user: { id: string; role: string; name: string }; created: boolean; email_verified: boolean } };
     expect(createdPayload.data.created).toBe(true);
+    expect(createdPayload.data.email_verified).toBe(true);
     expect(createdPayload.data.user.role).toBe('USER');
     expect(createdPayload.data.user.name).toBe('Firebase Student');
 
     const repeated = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    expect(await repeated.json()).toMatchObject({ data: { created: false, user: { id: createdPayload.data.user.id } } });
+    expect(await repeated.json()).toMatchObject({ data: { created: false, email_verified: true, user: { id: createdPayload.data.user.id } } });
 
     const fallbackToken = await firebaseToken({ email: 'fallback-name@example.test', name: '' }, {}, { subject: 'fallback-name-user' });
     const fallback = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${fallbackToken}` } });
