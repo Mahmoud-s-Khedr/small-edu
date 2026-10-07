@@ -15,6 +15,7 @@ The backend is launch-ready when:
 - The production deployment workflow completes successfully from `main`.
 - A super admin exists, access control and private files have been checked in production, and the booking-to-video-access flow works end to end.
 - The team has an owner for payment decisions, a backup/export routine, and a process for reviewing runtime errors.
+- Account-deletion retention decisions are approved, and the Firebase-to-D1/R2 cleanup flow in [account-deletion.md](account-deletion.md) is implemented and tested before the feature is exposed to users.
 
 ## 1. Make the outstanding product decisions
 
@@ -26,6 +27,7 @@ These decisions do not require new API code, but should be recorded before deplo
 2. Define what makes a receipt acceptable and how a rejection is communicated. The current status model is only `PENDING`, `ACCEPTED`, or `REJECTED`; it has no rejection-reason field.
 3. Decide whether administrator MFA is required at launch.
 4. Confirm whether the current 100 MB proxy-upload cap is sufficient. If larger files are required, scope a direct-to-R2 upload design separately and assess request limits and abuse controls.
+5. Approve a retention policy for payment receipts and the account-deletion/recovery policy. The required implementation design is in [account-deletion.md](account-deletion.md).
 
 **Acceptance:** the decisions are written down, and any required new data/API behavior is separately planned and implemented with a migration and tests.
 

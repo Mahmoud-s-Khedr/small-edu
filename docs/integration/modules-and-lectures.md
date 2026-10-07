@@ -40,6 +40,26 @@ type Material = {
 };
 ```
 
+## Catalogue filters
+
+These read-only endpoints return unique strings already in use by modules and
+lectures. They require a Firebase bearer token and return `Success<string[]>`.
+
+### `GET /academic-years`
+
+Returns the academic years with at least one module, newest string first.
+
+### `GET /semesters?academicYear=<year>`
+
+Returns the distinct semester labels for modules in the selected academic year.
+The `academicYear` query parameter is optional when a client needs every label.
+
+### `GET /subjects`
+
+Returns distinct lecture subjects. It accepts optional `moduleId` (UUID),
+`academicYear`, and `semester` filters, which can be combined. For a module's
+subject picker, use `GET /subjects?moduleId=<moduleId>`.
+
 ## Modules
 
 ### `GET /modules`

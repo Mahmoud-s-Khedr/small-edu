@@ -2,7 +2,7 @@
 
 Small, single-Worker backend for the Medly educational app. It uses Hono, Cloudflare D1, private R2, Drizzle, Zod, and Vitest's Cloudflare Workers runtime.
 
-See [ROADMAP.md](ROADMAP.md) for the product milestones and current implementation progress. For the outstanding backend-only launch work, see [docs/backend-remaining-work.md](docs/backend-remaining-work.md).
+See [ROADMAP.md](ROADMAP.md) for the product milestones and current implementation progress. For the outstanding backend-only launch work, see [docs/backend-remaining-work.md](docs/backend-remaining-work.md). The required cross-platform account-deletion design is documented in [docs/account-deletion.md](docs/account-deletion.md).
 
 ## What is included
 

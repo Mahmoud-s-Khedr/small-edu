@@ -113,6 +113,44 @@ type Upload = {
 };
 ```
 
+## Catalogue filters
+
+These endpoints return distinct strings already represented by modules and
+lectures. They are read-only and are not paginated.
+
+### `GET /academic-years`
+
+Returns academic years with at least one module, newest string first.
+
+```ts
+// 200
+type Response = Success<string[]>;
+```
+
+### `GET /semesters`
+
+Optionally pass `academicYear` to return only the semester labels for that
+year.
+
+```ts
+type Query = { academicYear?: string };
+type Response = Success<string[]>;
+```
+
+### `GET /subjects`
+
+Lists distinct lecture subjects. Filters may be combined to populate a global,
+year/semester, or module-level picker.
+
+```ts
+type Query = {
+  moduleId?: string;
+  academicYear?: string;
+  semester?: string;
+};
+type Response = Success<string[]>;
+```
+
 ## Health, session, and current user
 
 ### `GET /health`

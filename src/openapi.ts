@@ -103,6 +103,10 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureDto), { params: moduleIdParam });
   secured('post', '/modules/{moduleId}/lectures', ['Modules'], 'Create a lecture (admin)', envelope(lectureDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: lectureInput } } } }, 201);
 
+  secured('get', '/academic-years', ['Catalogue'], 'List available academic years', envelope(z.array(z.string())));
+  secured('get', '/semesters', ['Catalogue'], 'List available semesters, optionally for an academic year', envelope(z.array(z.string())), { query: z.object({ academicYear: z.string().optional() }) });
+  secured('get', '/subjects', ['Catalogue'], 'List available lecture subjects', envelope(z.array(z.string())), { query: z.object({ moduleId: uuid.optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
+
   secured('get', '/lectures', ['Lectures'], 'List lectures', paginated(lectureDto));
   secured('get', '/lectures/{lectureId}', ['Lectures'], 'Get a lecture', envelope(lectureDto), { params: lectureIdParam });
   secured('patch', '/lectures/{lectureId}', ['Lectures'], 'Update a lecture (admin)', envelope(lectureDto), { params: lectureIdParam, body: { content: { 'application/json': { schema: lecturePatch } } } });

@@ -218,12 +218,12 @@ or aggregate fields must be derived by the client today.
 
 | UI element | Current source | Integration note |
 | --- | --- | --- |
-| Academic-year selector | `GET /modules` | `academicYear` is a free-form module string. There is no distinct-years endpoint; derive available years from loaded module pages or maintain the approved years in client configuration. |
-| Semester selector | `GET /modules` | Filter with `GET /modules?academicYear=<year>&semester=<semester>`. There is no distinct-semesters endpoint. |
+| Academic-year selector | `GET /academic-years` | Returns distinct academic-year labels from the module catalogue. |
+| Semester selector | `GET /semesters?academicYear=<year>` | Returns distinct semester labels for the chosen academic year. |
 | All Modules grid | `GET /modules?academicYear=<year>&semester=<semester>` | Supported for title, number, academic year, semester, and price. `meta.total` supports the module count. |
 | My Modules tab | `GET /bookings` plus `GET /modules` | There is no direct “my accessible modules” endpoint. Filter locally to `ACCEPTED` booking `moduleId` values, then join them to modules. |
 | Module details | `GET /modules/:moduleId` | Supported for title, number, year, semester, and `priceCents`. |
-| Module subjects | `GET /lectures?moduleId=<moduleId>` | There is no subjects resource. Group returned lectures by their `subject` string and count each group. |
+| Module subjects | `GET /subjects?moduleId=<moduleId>` | Returns the module's distinct subject labels. Group lecture results separately when the UI needs counts. |
 | Subject lecture list | `GET /lectures?moduleId=<moduleId>&subject=<subject>` | Supported. Use `meta.total` for the subject's lecture count. |
 | Lecture details | `GET /lectures/:lectureId` | Supported for title, description, subject, lecture date, locked state, and conditionally the video URL. |
 | Lecture materials tab | `GET /lectures/:lectureId/materials` | Supported. Download an item with `GET /lectures/:lectureId/materials/:materialId/download`. Materials are available to all authenticated users; only video access is paid/locked. |
@@ -257,15 +257,16 @@ playback.
 
 The Figma screens treat **Anatomy**, **Physiology**, and similar values as
 subjects with their own screens. The API currently stores `subject` only as a
-string on each lecture. It has no subject ID, description, thumbnail, custom
-ordering, or standalone subject endpoint.
+string on each lecture. `GET /subjects` exposes its distinct values, but a
+subject still has no ID, description, thumbnail, or custom ordering.
 
 For the current implementation, the client can:
 
-1. Request the module's lectures.
-2. Group items by exact `subject` value.
-3. Navigate using the module ID and an URL-encoded subject string.
-4. Request `GET /lectures?moduleId=<id>&subject=<subject>` for the detail list.
+1. Request `GET /subjects?moduleId=<id>` for subject labels.
+2. Navigate using the module ID and an URL-encoded subject string.
+3. Request `GET /lectures?moduleId=<id>&subject=<subject>` for the detail list.
+4. Group that result set by exact `subject` value only when the UI needs
+   counts or other aggregates.
 
 This is sufficient for the displayed subject names and counts. If admins need
 to define subject metadata, control subject order, or rename subjects safely,

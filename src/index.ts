@@ -12,6 +12,7 @@ import { meRoutes } from './routes/me';
 import { moduleRoutes } from './routes/modules';
 import { uploadRoutes } from './routes/uploads';
 import { adminUserRoutes } from './routes/users';
+import { catalogRoutes } from './routes/catalog';
 import { errorHandler } from './middleware/error';
 import type { AppBindings } from './types';
 
@@ -37,6 +38,7 @@ api.route('/health', healthRoutes);
 api.route('/auth', authRoutes);
 api.route('/me', meRoutes);
 api.route('/modules', moduleRoutes);
+api.route('/', catalogRoutes);
 api.route('/uploads', uploadRoutes);
 api.route('/lectures', lectureRoutes);
 api.route('/', flashcardRoutes);

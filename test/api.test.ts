@@ -142,6 +142,9 @@ describe('Medly API', () => {
     expect(spec.status).toBe(200);
     const document = await spec.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
     expect(document.paths).toHaveProperty('/modules');
+    expect(document.paths).toHaveProperty('/academic-years');
+    expect(document.paths).toHaveProperty('/semesters');
+    expect(document.paths).toHaveProperty('/subjects');
     expect(document.paths['/me']).toHaveProperty('delete.responses.202');
     expect(document.paths).toHaveProperty('/lectures/{lectureId}/mcqs');
     expect(document.components.schemas).toHaveProperty('Module');
@@ -329,6 +332,34 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/modules/${module.id}`, { headers: auth(userId) })).status).toBe(200);
     expect((await json(`/api/v1/modules/${module.id}`, 'PATCH', { title: 'Advanced Cardiology' })).status).toBe(200);
     expect((await request(`/api/v1/modules/${module.id}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
+  });
+
+  it('lists distinct academic years, semesters, and subjects for catalogue filters', async () => {
+    const now = Date.now();
+    const otherModuleId = '88888888-8888-4888-8888-888888888888';
+    const otherLectureId = '99999999-9999-4999-8999-999999999999';
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(moduleId, 'Human Anatomy', '101', '2026', 'Spring', 0, now, now),
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(otherModuleId, 'Physiology', '201', '2025', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(lectureId, moduleId, 'Bones', '', 'Anatomy', now, 'https://video.example.test/bones', now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(otherLectureId, moduleId, 'Muscles', '', 'Anatomy', now, 'https://video.example.test/muscles', now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind('aaaaaaaa-1111-4111-8111-111111111111', otherModuleId, 'Heart', '', 'Physiology', now, 'https://video.example.test/heart', now, now),
+    ]);
+
+    expect((await request('/api/v1/academic-years')).status).toBe(401);
+    expect(await (await request('/api/v1/academic-years', { headers: auth(userId) })).json())
+      .toEqual({ data: ['2026', '2025'] });
+    expect(await (await request('/api/v1/semesters?academicYear=2026', { headers: auth(userId) })).json())
+      .toEqual({ data: ['Spring'] });
+    expect(await (await request(`/api/v1/subjects?moduleId=${moduleId}`, { headers: auth(userId) })).json())
+      .toEqual({ data: ['Anatomy'] });
+    expect(await (await request('/api/v1/subjects?academicYear=2025&semester=Fall', { headers: auth(userId) })).json())
+      .toEqual({ data: ['Physiology'] });
   });
 
   it('lets only a super admin manage operational admin roles', async () => {

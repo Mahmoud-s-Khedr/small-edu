@@ -49,6 +49,7 @@ Status: **backend complete; Firebase client setup pending**
 - [ ] Configure the Apple Developer Service ID, return URL, signing key, and private email relay.
 - [ ] Configure `FIREBASE_PROJECT_ID` for every Worker environment and implement Firebase client login, email verification/reset, account linking, and `getIdToken()` refresh handling.
 - [x] Establish an audited role-management path: a deployment-time seeder provisions `SUPER_ADMIN`; only that role can grant or revoke `ADMIN`.
+- [ ] Implement account deletion across Firebase Authentication, D1, and R2, including receipt-retention decisions, recent reauthentication, retry-safe cleanup, and final-super-admin protection. See [docs/account-deletion.md](docs/account-deletion.md).
 
 ## Phase 3 — modules, lectures, and materials
 
