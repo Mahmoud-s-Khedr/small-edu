@@ -47,11 +47,15 @@ jobs:
         env:
           FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
           R2_S3_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
           R2_S3_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
         run: |
           test -n "$FIREBASE_PROJECT_ID"
           test -n "$CORS_ORIGINS"
+          test -n "$FIREBASE_CLIENT_EMAIL"
+          test -n "$FIREBASE_PRIVATE_KEY"
           test -n "$R2_S3_ACCESS_KEY_ID"
           test -n "$R2_S3_SECRET_ACCESS_KEY"
 
@@ -73,11 +77,15 @@ jobs:
             CORS_ORIGINS
             R2_ACCOUNT_ID
           secrets: |
+            FIREBASE_CLIENT_EMAIL
+            FIREBASE_PRIVATE_KEY
             R2_S3_ACCESS_KEY_ID
             R2_S3_SECRET_ACCESS_KEY
         env:
           FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_S3_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
           R2_S3_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}

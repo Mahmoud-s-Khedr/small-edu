@@ -33,13 +33,13 @@ These decisions do not require new API code, but should be recorded before deplo
 
 **Owner:** Firebase/project administrator
 
-The Worker already verifies Firebase RS256 ID tokens. It does not store passwords, send password-reset messages, or need a Firebase service-account credential.
+The Worker already verifies Firebase RS256 ID tokens. It does not store passwords, send password-reset messages, or need server credentials for token verification. Account deletion requires a service account with Firebase user-deletion permission.
 
 1. Create a Firebase project for development and production, or establish clearly separated environments in the approved project.
 2. In Firebase Authentication, enable Email/Password, Google, and Apple if those sign-in methods are part of the release.
 3. Add only the approved client domains and platform identifiers to Firebase. Configure Apple’s Service ID, return URL, signing key, and private-email relay as applicable.
 4. Set the exact production Firebase project ID as the GitHub `production` environment variable `FIREBASE_PROJECT_ID`.
-5. Set the same value for the intended local/development Worker environment. Do not add a Firebase API key, service-account JSON, or Firebase admin credentials to Worker secrets.
+5. Set the same value for the intended local/development Worker environment. Configure `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` as Worker secrets for account deletion; do not commit credentials or add a client API key. See [account deletion](account-deletion.md).
 6. Obtain a verified Firebase ID token from the real project and confirm:
    - `POST /api/v1/auth/session` creates a `USER` account on first use;
    - a repeated request returns the same account;
@@ -67,7 +67,7 @@ The detailed identity contract and provider release checks are in [authenticatio
 
 3. Copy the D1 database ID returned by the create command into `wrangler.jsonc`. Before committing or deploying, verify that the `DB` binding identifies the intended production database and that `STORAGE` identifies the intended `medly-storage` bucket.
 4. Keep the R2 bucket private. All file access must continue through the authenticated Worker endpoints; do not add a public bucket domain.
-5. Confirm the configured daily cron trigger remains present. It removes abandoned, unsubmitted payment receipts after 24 hours.
+5. Confirm the configured five-minute cron trigger remains present. It retries account deletion jobs; all payment receipts are retained.
 6. Set the allowed web origins as the GitHub `production` environment variable `CORS_ORIGINS`, using a comma-separated list. Do not use `*` with credentialed browser requests unless that is an intentional, reviewed policy.
 
 ## 4. Configure CI/CD authorization and deploy

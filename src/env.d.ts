@@ -2,6 +2,9 @@ declare global {
   interface Env {
     /** Firebase project ID, for example "medly-prod". This is not a secret. */
     FIREBASE_PROJECT_ID?: string;
+    /** Service-account email and PKCS8 private key for Firebase user deletion. */
+    FIREBASE_CLIENT_EMAIL?: string;
+    FIREBASE_PRIVATE_KEY?: string;
     /** Comma-separated browser origins allowed to call the API. */
     CORS_ORIGINS?: string;
     /** Cloudflare account that owns the private R2 bucket. */

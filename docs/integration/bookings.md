@@ -9,7 +9,7 @@ type BookingStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
 type Booking = {
   id: string;
-  userId: string;
+  userId: string | null; // Null after account deletion.
   moduleId: string;
   receiptFilename: string;
   receiptContentType: string;
@@ -41,9 +41,9 @@ admin accepts booking
 ```
 
 There is no `POST /bookings/receipt` endpoint. Receipt uploads use the shared
-`/uploads` protocol below. An unsubmitted receipt upload is deleted
-automatically after 24 hours. If the user cancels before creating the booking,
-call `DELETE /bookings/receipt`.
+`/uploads` protocol below. All payment receipts are retained, including
+unsubmitted uploads and receipts belonging to deleted accounts. There is no
+automatic cleanup of payment receipts.
 
 ## Direct receipt upload
 
@@ -66,7 +66,7 @@ The completion response is `201 Created`:
 type Response = Success<Upload>;
 ```
 
-Keep `data.objectKey` only long enough to submit/delete the receipt; it is an
+Keep `data.objectKey` only long enough to submit the receipt; it is an
 opaque server storage key and is never returned in booking-list responses.
 
 ## `POST /bookings`
@@ -90,16 +90,15 @@ module; `404` if the module or uploaded receipt cannot be found.
 
 ## `DELETE /bookings/receipt`
 
-**Job:** discard an uploaded receipt that has not been submitted in a booking.
-
-**Request DTO**
+**Job:** compatibility endpoint; payment receipt deletion is disabled.
 
 ```ts
 type Body = { receiptKey: string };
 ```
 
-**Expected response — `204 No Content`.** A submitted receipt cannot be
-deleted and returns `409 CONFLICT`.
+**Expected response — `409 CONFLICT`.** An owned receipt is retained regardless
+of submission status. A key outside the caller's receipt prefix also returns
+`409`; no R2 object is deleted.
 
 ## `GET /bookings`
 
@@ -158,6 +157,9 @@ type Body = { status: 'ACCEPTED' | 'REJECTED' };
 ```
 
 **Expected response — `200 OK`:** `Success<Booking>`.
+
+Bookings retained after account deletion have `userId: null`. Their receipts
+remain downloadable; decisions do not grant access when no active user exists.
 
 Only a `PENDING` booking may be decided. A second decision attempt returns
 `409 CONFLICT`; the UI should refresh the queue item.
