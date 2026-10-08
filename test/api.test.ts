@@ -1,6 +1,7 @@
 import migration from '../drizzle/0000_initial.sql?raw';
 import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
+import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
 import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion } from '../src/lib/account-deletion';
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -114,6 +115,7 @@ beforeAll(async () => {
   expect(await env.DB.prepare('SELECT user_id, receipt_key FROM booking_requests WHERE id = ?').bind('migration-booking').first())
     .toEqual({ user_id: null, receipt_key: 'payment-receipts/migration.pdf' });
   expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
+  await env.DB.batch(uploadsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
 });
 
 afterAll(() => vi.unstubAllGlobals());
@@ -123,7 +125,7 @@ beforeEach(async () => {
   deletedUids = [];
   oauthAssertions = [];
   await env.DB.batch([
-    'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
+    'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'uploads', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
   await seed();
   authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
@@ -483,7 +485,7 @@ describe('Medly API', () => {
     }, userId)).status).toBe(400);
   });
 
-  it('authorizes a direct R2 upload and verifies it before attaching it', async () => {
+  it('verifies a direct R2 upload before a separate material attachment', async () => {
     const now = Date.now();
     await env.DB.batch([
       env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Direct files', '23', '2026', 'Fall', 0, now, now),
@@ -500,10 +502,29 @@ describe('Medly API', () => {
     await env.STORAGE.put(plan.objectKey, 'notes', { httpMetadata: { contentType: 'application/pdf' } });
     const completed = await json('/api/v1/uploads/complete', 'POST', { purpose: 'lecture-material', lectureId, objectKey: plan.objectKey, ...details });
     expect(completed.status).toBe(201);
-    expect(await completed.json()).toMatchObject({ data: { lectureId, originalFilename: 'notes.pdf', sizeBytes: 5 } });
+    expect(await completed.json()).toMatchObject({ data: { objectKey: plan.objectKey, filename: 'notes.pdf', sizeBytes: 5 } });
+    expect((await request(`/api/v1/lectures/${lectureId}/materials`, { headers: auth(adminId) }).then((response) => response.json()) as { data: unknown[] }).data).toHaveLength(0);
 
+    const attached = await json(`/api/v1/lectures/${lectureId}/materials`, 'POST', { uploadKey: plan.objectKey });
+    expect(attached.status).toBe(201);
+    expect(await attached.json()).toMatchObject({ data: { lectureId, originalFilename: 'notes.pdf', sizeBytes: 5 } });
+    expect((await json(`/api/v1/lectures/${lectureId}/materials`, 'POST', { uploadKey: plan.objectKey })).status).toBe(409);
+
+    const imageDetails = { filename: 'card.png', contentType: 'image/png', sizeBytes: 3 };
+    const imagePlanResponse = await json('/api/v1/uploads', 'POST', { purpose: 'flashcard-image', lectureId, ...imageDetails });
+    const imagePlan = (await imagePlanResponse.json() as { data: { objectKey: string } }).data;
+    await env.STORAGE.put(imagePlan.objectKey, 'png', { httpMetadata: { contentType: 'image/png' } });
+    expect((await json('/api/v1/uploads/complete', 'POST', { purpose: 'flashcard-image', lectureId, objectKey: imagePlan.objectKey, ...imageDetails })).status).toBe(201);
+    expect((await json(`/api/v1/lectures/${lectureId}/flashcards`, 'POST', { frontImageKey: imagePlan.objectKey, backText: 'Answer' })).status).toBe(400);
+    expect((await json(`/api/v1/lectures/${lectureId}/flashcard-images`, 'POST', { uploadKey: imagePlan.objectKey })).status).toBe(201);
+    expect((await json(`/api/v1/lectures/${lectureId}/flashcards`, 'POST', { frontImageKey: imagePlan.objectKey, backText: 'Answer' })).status).toBe(201);
+    expect((await json(`/api/v1/lectures/${lectureId}/flashcard-images`, 'POST', { uploadKey: imagePlan.objectKey })).status).toBe(409);
+
+    const missingDetails = { filename: 'missing.pdf', contentType: 'application/pdf', sizeBytes: 1 };
+    const missingPlan = await json('/api/v1/uploads', 'POST', { purpose: 'payment-receipt', ...missingDetails }, userId);
+    const { objectKey: missingKey } = (await missingPlan.json() as { data: { objectKey: string } }).data;
     const wrongSize = await json('/api/v1/uploads/complete', 'POST', {
-      purpose: 'payment-receipt', objectKey: `payment-receipts/${userId}/missing.pdf`, filename: 'missing.pdf', contentType: 'application/pdf', sizeBytes: 1,
+      purpose: 'payment-receipt', objectKey: missingKey, ...missingDetails,
     }, userId);
     expect(wrongSize.status).toBe(400);
   });

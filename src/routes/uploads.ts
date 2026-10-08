@@ -2,8 +2,8 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
-import { lectureMaterials, lectures } from '../db/schema';
-import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
+import { lectures, uploads } from '../db/schema';
+import { conflict, forbidden, notFound } from '../lib/errors';
 import { createPresignedUpload, uploadDetails, verifyDirectUpload } from '../lib/presigned-uploads';
 import { safeFilename } from '../lib/storage';
 import { requireAuth } from '../middleware/auth';
@@ -38,42 +38,37 @@ uploadRoutes.use('*', requireAuth);
 
 uploadRoutes.post('/', async (c) => {
   const input = uploadRequest.parse(await c.req.json());
-  if (input.purpose === 'payment-receipt') {
-    return c.json({ data: await createPresignedUpload(c.env, input.purpose, c.get('user').id, input) }, 201);
-  }
-  if (!isAdmin(c)) throw forbidden();
-  await requireLecture(c.env, input.lectureId);
-  return c.json({ data: await createPresignedUpload(c.env, input.purpose, input.lectureId, input) }, 201);
+  const user = c.get('user');
+  const plan = input.purpose === 'payment-receipt'
+    ? await createPresignedUpload(c.env, input.purpose, user.id, input)
+    : await (async () => {
+      if (!isAdmin(c)) throw forbidden();
+      await requireLecture(c.env, input.lectureId);
+      return createPresignedUpload(c.env, input.purpose, input.lectureId, input);
+    })();
+  await db(c.env.DB).insert(uploads).values({
+    objectKey: plan.objectKey,
+    purpose: input.purpose,
+    uploaderId: user.id,
+    lectureId: 'lectureId' in input ? input.lectureId : null,
+    filename: plan.filename,
+    contentType: plan.contentType,
+    sizeBytes: plan.sizeBytes,
+    createdAt: new Date(),
+  });
+  return c.json({ data: plan }, 201);
 });
 
 uploadRoutes.post('/complete', async (c) => {
   const input = uploadCompletion.parse(await c.req.json());
   const { purpose, objectKey, filename, contentType, sizeBytes } = input;
-  const details = { filename, contentType, sizeBytes };
-
-  if (purpose === 'payment-receipt') {
-    const userId = c.get('user').id;
-    if (!objectKey.startsWith(`payment-receipts/${userId}/`)) throw conflict('Receipt does not belong to the authenticated user');
-    await verifyDirectUpload(c.env.STORAGE, objectKey, details);
-    return c.json({ data: { objectKey, filename: safeFilename(filename), contentType, sizeBytes } }, 201);
-  }
-
-  if (!isAdmin(c)) throw forbidden();
-  await requireLecture(c.env, input.lectureId);
-  if (purpose === 'flashcard-image') {
-    if (!objectKey.startsWith(`flashcards/${input.lectureId}/`)) throw badRequest('Flashcard images must be uploaded for this lecture');
-    await verifyDirectUpload(c.env.STORAGE, objectKey, details);
-    return c.json({ data: { objectKey, filename: safeFilename(filename), contentType, sizeBytes } }, 201);
-  }
-
-  if (!objectKey.startsWith(`lecture-materials/${input.lectureId}/`)) throw notFound('Upload not found');
-  await verifyDirectUpload(c.env.STORAGE, objectKey, details);
-  const now = new Date();
-  const item = {
-    id: crypto.randomUUID(), lectureId: input.lectureId, objectKey,
-    originalFilename: safeFilename(filename), contentType, sizeBytes, createdAt: now, updatedAt: now,
-  };
-  await db(c.env.DB).insert(lectureMaterials).values(item);
-  const { objectKey: _objectKey, ...response } = item;
-  return c.json({ data: response }, 201);
+  const upload = await db(c.env.DB).query.uploads.findFirst({ where: eq(uploads.objectKey, objectKey) });
+  if (!upload || upload.purpose !== purpose || upload.filename !== safeFilename(filename)
+    || upload.contentType !== contentType || upload.sizeBytes !== sizeBytes
+    || (('lectureId' in input ? input.lectureId : null) !== upload.lectureId)) throw notFound('Upload not found');
+  if (upload.uploaderId !== c.get('user').id) throw conflict('Upload does not belong to the authenticated user');
+  if (purpose !== 'payment-receipt' && !isAdmin(c)) throw forbidden();
+  await verifyDirectUpload(c.env.STORAGE, objectKey, { filename, contentType, sizeBytes });
+  if (!upload.completedAt) await db(c.env.DB).update(uploads).set({ completedAt: new Date() }).where(eq(uploads.objectKey, objectKey));
+  return c.json({ data: { objectKey, filename: upload.filename, contentType, sizeBytes } }, 201);
 });

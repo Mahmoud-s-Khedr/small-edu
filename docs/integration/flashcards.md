@@ -75,12 +75,14 @@ minutes); reload the card to obtain refreshed URLs.
    `data.requiredHeaders`.
 3. `POST /uploads/complete` with the returned `objectKey`, `purpose`,
    `lectureId`, and the same metadata.
+4. `POST /lectures/:lectureId/flashcard-images` with
+   `{ uploadKey: data.objectKey }` to attach the verified image to its lecture.
 
 Allowed MIME types are `image/jpeg`, `image/png`, and `image/webp`. The
 completion endpoint returns `201 Created`: `Success<Upload>`.
 
-Use `data.objectKey` only as `frontImageKey` or `backImageKey` in a subsequent
-admin create/update request for the same lecture.
+Use the attached `data.objectKey` as `frontImageKey` or `backImageKey` in a
+subsequent admin create/update request for the same lecture.
 
 ## `POST /lectures/:lectureId/flashcards` — Admin
 

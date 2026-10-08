@@ -436,11 +436,37 @@ type Response = Success<Upload & {
 
 PUT the file bytes directly to `uploadUrl` with `requiredHeaders`, then call
 `POST /uploads/complete` with `{ objectKey, ...Body }`. It verifies the stored
-object. A lecture-material completion creates and returns `Success<Material>`;
-receipt and image completion return `Success<Upload>`. Lecture material and
+object and returns `Success<Upload>`. Attach a completed lecture material with
+`POST /lectures/:lectureId/materials` or flashcard image with
+`POST /lectures/:lectureId/flashcard-images`; both accept `{ uploadKey: objectKey }`.
+The material endpoint returns `Success<Material>` and the image endpoint returns
+`Success<Upload>`. Lecture material and
 flashcard image uploads require an admin role. No lecture-material MIME-type
 allowlist is applied; receipts allow PDF/JPEG/PNG and flashcard images allow
 JPEG/PNG/WebP.
+
+### `POST /lectures/:lectureId/materials` — Admin
+
+Attaches one verified, unattached lecture-material upload to its lecture.
+
+```ts
+type Path = { lectureId: string };
+type Body = { uploadKey: string }; // objectKey from POST /uploads/complete
+// 201
+type Response = Success<Material>;
+```
+
+### `POST /lectures/:lectureId/flashcard-images` — Admin
+
+Attaches one verified, unattached flashcard-image upload to its lecture. The
+returned key may then be used as a flashcard `frontImageKey` or `backImageKey`.
+
+```ts
+type Path = { lectureId: string };
+type Body = { uploadKey: string }; // objectKey from POST /uploads/complete
+// 201
+type Response = Success<Upload>;
+```
 
 ### `GET /lectures/:lectureId/materials/:materialId/download`
 
@@ -630,8 +656,8 @@ type Response = Success<Flashcard>;
 
 ### `POST /lectures/:lectureId/flashcards` — Admin
 
-At least one front value and one back value are required. Image keys must have
-been returned by the flashcard-image upload endpoint for this same lecture.
+At least one front value and one back value are required. Image keys must be
+completed and attached for this same lecture.
 
 ```ts
 type Path = { lectureId: string };
@@ -651,7 +677,9 @@ type Response = Success<Flashcard>;
 
 Use the common upload flow with `purpose: 'flashcard-image'` and `lectureId`.
 Allowed MIME types are `image/jpeg`, `image/png`, and `image/webp`; completion
-returns `Success<Upload>` with 201.
+returns `Success<Upload>` with 201. Then call
+`POST /lectures/:lectureId/flashcard-images` with `{ uploadKey: data.objectKey }`
+before using the key on a card.
 
 ### `PATCH /flashcards/:flashcardId` — Admin
 

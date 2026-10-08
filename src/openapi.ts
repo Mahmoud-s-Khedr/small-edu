@@ -112,6 +112,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('patch', '/lectures/{lectureId}', ['Lectures'], 'Update a lecture (admin)', envelope(lectureDto), { params: lectureIdParam, body: { content: { 'application/json': { schema: lecturePatch } } } });
   noContent('delete', '/lectures/{lectureId}', ['Lectures'], 'Delete a lecture (admin)', { params: lectureIdParam });
   secured('get', '/lectures/{lectureId}/materials', ['Lectures'], 'List lecture materials', envelope(z.array(material)), { params: lectureIdParam });
+  secured('post', '/lectures/{lectureId}/materials', ['Lectures'], 'Attach a completed material upload to a lecture (admin)', envelope(material), { params: lectureIdParam, body: { content: { 'application/json': { schema: z.object({ uploadKey: z.string().min(1).max(500) }) } } } }, 201);
   secured('get', '/lectures/{lectureId}/materials/{materialId}/download', ['Lectures'], 'Download a lecture material', z.string().openapi({ format: 'binary' }), { params: lectureIdParam.extend({ materialId: uuid }) });
   secured('patch', '/lectures/{lectureId}/materials/{materialId}', ['Lectures'], 'Rename a lecture material (admin)', envelope(material), { params: lectureIdParam.extend({ materialId: uuid }), body: { content: { 'application/json': { schema: z.object({ originalFilename: z.string().min(1).max(255) }) } } } });
   noContent('delete', '/lectures/{lectureId}/materials/{materialId}', ['Lectures'], 'Delete a lecture material (admin)', { params: lectureIdParam.extend({ materialId: uuid }) });
@@ -127,6 +128,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('patch', '/admin/users/{userId}/role', ['Admin'], 'Change a user role (super admin)', envelope(user), { params: z.object({ userId: uuid }), body: { content: { 'application/json': { schema: z.object({ role: z.enum(['USER', 'ADMIN']) }) } } } });
 
   secured('get', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'List lecture flashcards', envelope(z.array(flashcard)), { params: lectureIdParam });
+  secured('post', '/lectures/{lectureId}/flashcard-images', ['Flashcards'], 'Attach a completed flashcard-image upload to a lecture (admin)', envelope(upload), { params: lectureIdParam, body: { content: { 'application/json': { schema: z.object({ uploadKey: z.string().min(1).max(500) }) } } } }, 201);
   secured('post', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'Create a flashcard (admin)', envelope(flashcard), { params: lectureIdParam, body: { content: { 'application/json': { schema: flashcardInput } } } }, 201);
   secured('get', '/flashcards/{flashcardId}', ['Flashcards'], 'Get a flashcard', envelope(flashcard), { params: flashcardIdParam });
   secured('patch', '/flashcards/{flashcardId}', ['Flashcards'], 'Update a flashcard (admin)', envelope(flashcard), { params: flashcardIdParam, body: { content: { 'application/json': { schema: flashcardPatch } } } });
@@ -135,7 +137,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/lectures/{lectureId}/flashcards/progress', ['Flashcards'], 'Get flashcard progress', envelope(z.object({ total: z.number().int(), known: z.number().int(), hidden: z.number().int() })), { params: lectureIdParam });
 
   secured('post', '/uploads', ['Uploads'], 'Create a direct R2 upload URL', envelope(presignedUpload), { body: { content: { 'application/json': { schema: uploadRequest } } } }, 201);
-  secured('post', '/uploads/complete', ['Uploads'], 'Verify a direct upload and perform its resource-specific attachment', envelope(z.union([upload, material])), { body: { content: { 'application/json': { schema: uploadCompletion } } } }, 201);
+  secured('post', '/uploads/complete', ['Uploads'], 'Verify a direct upload; attachment is performed by the resource endpoint', envelope(upload), { body: { content: { 'application/json': { schema: uploadCompletion } } } }, 201);
 
   secured('get', '/lectures/{lectureId}/mcqs', ['MCQs'], 'List a lecture’s MCQs', envelope(z.array(mcq)), { params: lectureIdParam });
   secured('post', '/lectures/{lectureId}/mcqs', ['MCQs'], 'Create an MCQ (admin)', envelope(mcq), { params: lectureIdParam, body: { content: { 'application/json': { schema: mcqInput } } } }, 201);

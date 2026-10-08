@@ -28,8 +28,10 @@ is responding. This is the only public endpoint.
   then POST the returned key and the same metadata to `/uploads/complete`.
   Lecture-material and flashcard-image uploads also require `lectureId` in both
   API calls. Do not use `multipart/form-data` or send the Firebase token to R2.
-  `payment-receipt` completion verifies the upload and returns the key;
-  `lecture-material` completion also creates the material record.
+  Completion verifies the upload and returns the key. Attach a completed
+  lecture material or flashcard image separately with
+  `POST /lectures/:lectureId/materials` or `/flashcard-images` and
+  `{ uploadKey }`.
 - Treat the returned upload URL as a short-lived bearer credential. It is
   scoped to one named object and expires after 10 minutes; retrying the PUT
   before expiry replaces that same object.

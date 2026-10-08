@@ -74,6 +74,22 @@ export const lectureMaterials = sqliteTable('lecture_materials', {
   ...timestamps,
 }, (table) => [index('materials_lecture_idx').on(table.lectureId)]);
 
+/** A verified private object, before a resource such as a material claims it. */
+export const uploads = sqliteTable('uploads', {
+  objectKey: text('object_key').primaryKey(),
+  purpose: text('purpose', { enum: ['lecture-material', 'payment-receipt', 'flashcard-image'] }).notNull(),
+  uploaderId: text('uploader_id').notNull(),
+  lectureId: text('lecture_id'),
+  filename: text('filename').notNull(),
+  contentType: text('content_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  attachedAt: integer('attached_at', { mode: 'timestamp_ms' }),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+}, (table) => [
+  index('uploads_pending_attachment_idx').on(table.purpose, table.lectureId, table.completedAt, table.attachedAt),
+]);
+
 export const bookingRequests = sqliteTable('booking_requests', {
   id: text('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),

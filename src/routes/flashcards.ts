@@ -1,8 +1,8 @@
 import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
-import { flashcards, lectures, userFlashcardState } from '../db/schema';
-import { badRequest, notFound, unauthorized } from '../lib/errors';
+import { flashcards, lectures, uploads, userFlashcardState } from '../db/schema';
+import { badRequest, conflict, forbidden, notFound, unauthorized } from '../lib/errors';
 import { flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam } from '../lib/validation';
 import { deletePrivateObjects } from '../lib/storage';
 import { createPresignedDownload } from '../lib/presigned-uploads';
@@ -40,10 +40,11 @@ function validateCardContent(card: Pick<typeof flashcards.$inferInsert, 'frontTe
   if (!card.backText && !card.backImageKey) throw badRequest('A back text or image is required');
 }
 
-function validateImageKeys(lectureId: string, keys: Array<string | null | undefined>): void {
-  for (const imageKey of keys) {
-    if (imageKey && !imageKey.startsWith(`flashcards/${lectureId}/`)) {
-      throw badRequest('Flashcard images must be uploaded for this lecture');
+async function validateAttachedImageKeys(database: ReturnType<typeof db>, lectureId: string, keys: Array<string | null | undefined>): Promise<void> {
+  for (const imageKey of new Set(keys.filter((key): key is string => !!key))) {
+    const upload = await database.query.uploads.findFirst({ where: eq(uploads.objectKey, imageKey) });
+    if (!upload || upload.purpose !== 'flashcard-image' || upload.lectureId !== lectureId || !upload.completedAt || !upload.attachedAt) {
+      throw badRequest('Flashcard images must be completed and attached for this lecture');
     }
   }
 }
@@ -72,12 +73,27 @@ flashcardRoutes.get('/lectures/:lectureId/flashcards', async (c) => {
   return c.json({ data: await Promise.all(visibleRows.map((row) => cardResponse(c.env, row.card, row.state ?? undefined))) });
 });
 
+flashcardRoutes.post('/lectures/:lectureId/flashcard-images', requireAdmin, async (c) => {
+  const { lectureId } = lectureIdParam.parse(c.req.param());
+  const { uploadKey } = z.object({ uploadKey: z.string().min(1).max(500) }).parse(await c.req.json());
+  const database = db(c.env.DB);
+  if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
+  const upload = await database.query.uploads.findFirst({ where: eq(uploads.objectKey, uploadKey) });
+  if (!upload || upload.purpose !== 'flashcard-image' || upload.lectureId !== lectureId || !upload.completedAt) {
+    throw notFound('Completed flashcard image upload not found');
+  }
+  if (upload.uploaderId !== c.get('user').id) throw forbidden('Upload does not belong to the authenticated user');
+  if (upload.attachedAt) throw conflict('Upload has already been attached');
+  await database.update(uploads).set({ attachedAt: new Date() }).where(eq(uploads.objectKey, upload.objectKey));
+  return c.json({ data: { objectKey: upload.objectKey, filename: upload.filename, contentType: upload.contentType, sizeBytes: upload.sizeBytes } }, 201);
+});
+
 flashcardRoutes.post('/lectures/:lectureId/flashcards', requireAdmin, async (c) => {
   const { lectureId } = lectureIdParam.parse(c.req.param());
   const input = flashcardInput.parse(await c.req.json());
   const database = db(c.env.DB);
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
-  validateImageKeys(lectureId, [input.frontImageKey, input.backImageKey]);
+  await validateAttachedImageKeys(database, lectureId, [input.frontImageKey, input.backImageKey]);
   const now = new Date();
   const item = { id: crypto.randomUUID(), lectureId, frontText: input.frontText ?? null, frontImageKey: input.frontImageKey ?? null, backText: input.backText ?? null, backImageKey: input.backImageKey ?? null, ordering: input.ordering, createdAt: now, updatedAt: now };
   await database.insert(flashcards).values(item);
@@ -105,7 +121,7 @@ flashcardRoutes.patch('/flashcards/:flashcardId', requireAdmin, async (c) => {
   if (!card) throw notFound('Flashcard not found');
   const nextCard = { ...card, ...input };
   validateCardContent(nextCard);
-  validateImageKeys(card.lectureId, [nextCard.frontImageKey, nextCard.backImageKey]);
+  await validateAttachedImageKeys(database, card.lectureId, [nextCard.frontImageKey, nextCard.backImageKey]);
   const updatedAt = new Date();
   await database.update(flashcards).set({ ...input, updatedAt }).where(eq(flashcards.id, flashcardId));
   await deleteUnreferencedImages(database, c.env.STORAGE, [

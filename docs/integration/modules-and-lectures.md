@@ -295,10 +295,13 @@ Worker.
    `data.requiredHeaders`. Do not send the Firebase token to R2.
 3. `POST /uploads/complete` with `purpose: 'lecture-material'`, the same
    `lectureId`, the returned `objectKey`, and the same `filename`,
-   `contentType`, and `sizeBytes`.
+   `contentType`, and `sizeBytes`. It returns a verified but unattached upload.
+4. `POST /lectures/:lectureId/materials` with `{ uploadKey: data.objectKey }`
+   to attach the completed upload.
 
 The completion endpoint verifies R2 contains an object with the exact declared
-size and MIME type, then returns `Success<Material>` with `201 Created`.
+size and MIME type. The attachment endpoint creates and returns
+`Success<Material>` with `201 Created`.
 Lecture materials have no MIME-type allowlist.
 
 ### `GET /lectures/:lectureId/materials/:materialId/download`

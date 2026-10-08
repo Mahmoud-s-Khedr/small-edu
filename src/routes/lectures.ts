@@ -2,9 +2,9 @@ import { and, count, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { flashcards, lectureMaterials, lectures, moduleAccess, modules } from '../db/schema';
+import { flashcards, lectureMaterials, lectures, moduleAccess, modules, uploads } from '../db/schema';
 import { hasModuleVideoAccess, requireModuleVideoAccess } from '../lib/access';
-import { notFound } from '../lib/errors';
+import { conflict, forbidden, notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureIdParam, lecturePatch } from '../lib/validation';
 import { deletePrivateObjects } from '../lib/storage';
@@ -94,6 +94,34 @@ lectureRoutes.get('/:lectureId/materials', async (c) => {
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
   const items = await database.select().from(lectureMaterials).where(eq(lectureMaterials.lectureId, lectureId));
   return c.json({ data: items.map(({ objectKey: _objectKey, ...material }) => material) });
+});
+
+lectureRoutes.post('/:lectureId/materials', requireAdmin, async (c) => {
+  const { lectureId } = lectureIdParam.parse(c.req.param());
+  const { uploadKey } = z.object({ uploadKey: z.string().min(1).max(500) }).parse(await c.req.json());
+  const database = db(c.env.DB);
+  if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
+  const upload = await database.query.uploads.findFirst({ where: eq(uploads.objectKey, uploadKey) });
+  if (!upload || upload.purpose !== 'lecture-material' || upload.lectureId !== lectureId || !upload.completedAt) {
+    throw notFound('Completed material upload not found');
+  }
+  if (upload.uploaderId !== c.get('user').id) throw forbidden('Upload does not belong to the authenticated user');
+  if (upload.attachedAt) throw conflict('Upload has already been attached');
+  const now = new Date();
+  const item = {
+    id: crypto.randomUUID(), lectureId, objectKey: upload.objectKey,
+    originalFilename: upload.filename, contentType: upload.contentType, sizeBytes: upload.sizeBytes,
+    createdAt: now, updatedAt: now,
+  };
+  try {
+    await database.insert(lectureMaterials).values(item);
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) throw conflict('Upload has already been attached');
+    throw error;
+  }
+  await database.update(uploads).set({ attachedAt: now }).where(eq(uploads.objectKey, upload.objectKey));
+  const { objectKey: _objectKey, ...response } = item;
+  return c.json({ data: response }, 201);
 });
 
 lectureRoutes.get('/:lectureId/video', async (c) => {

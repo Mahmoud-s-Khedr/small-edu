@@ -78,7 +78,7 @@ All routes except health require a bearer token. Admin routes additionally requi
 - `POST /api/v1/auth/session` after a Firebase client login
 - `GET|POST /api/v1/modules/:moduleId/lectures`
 - `GET|PATCH|DELETE /api/v1/lectures/:lectureId`, `GET /api/v1/lectures/:lectureId/video`
-- All file types use `POST /api/v1/uploads` → R2 `PUT` → `POST /api/v1/uploads/complete`. Set `purpose` to `lecture-material`, `flashcard-image`, or `payment-receipt`; lecture uploads additionally include `lectureId`. Material completion creates the material, while receipt/image completion returns its private object key. `GET /api/v1/lectures/:lectureId/materials/:materialId/download` downloads a material.
+- All file types use `POST /api/v1/uploads` → R2 `PUT` → `POST /api/v1/uploads/complete`. Completion only verifies the private object and returns its key. Set `purpose` to `lecture-material`, `flashcard-image`, or `payment-receipt`; lecture uploads additionally include `lectureId`. Attach completed materials and flashcard images with `POST /api/v1/lectures/:lectureId/materials` or `/flashcard-images` and `{ uploadKey }`. `GET /api/v1/lectures/:lectureId/materials/:materialId/download` downloads a material.
 - Create a booking with `POST /api/v1/bookings` after completing a receipt upload. Payment receipts, including unsubmitted uploads, are retained; `DELETE /api/v1/bookings/receipt` returns `409`.
 - `DELETE /api/v1/me` accepts account deletion with recent Firebase authentication. Bookings and receipts remain; a five-minute cron retries cleanup. See [account deletion](docs/account-deletion.md) for setup and the client contract.
 - `GET /api/v1/admin/bookings`, `PATCH /api/v1/admin/bookings/:bookingId`

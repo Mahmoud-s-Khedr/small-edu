@@ -36,7 +36,7 @@ type Field = {
   fullWidth?: boolean;
 };
 type FileField = { accept: string; label: string; help: string };
-type DirectUpload = { purpose: 'lecture-material' | 'payment-receipt' | 'flashcard-image'; requiresLecture?: boolean };
+type DirectUpload = { purpose: 'lecture-material' | 'payment-receipt' | 'flashcard-image'; requiresLecture?: boolean; attachMaterial?: boolean; attachFlashcardImage?: boolean };
 type Preset = {
   group: string;
   label: string;
@@ -116,7 +116,7 @@ const presets: Preset[] = [
   ] },
   { group: 'Lectures and materials', label: 'Delete lecture', method: 'DELETE', path: '/lectures/:lectureId', params: [lectureId()] },
   { group: 'Lectures and materials', label: 'List materials', method: 'GET', path: '/lectures/:lectureId/materials', params: [lectureId()], saveIdAs: 'materialId' },
-  { group: 'Lectures and materials', label: 'Upload material', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Lecture material', accept: '', help: 'Uploads directly to private R2 after the API issues a short-lived URL.' }, directUpload: { purpose: 'lecture-material', requiresLecture: true }, saveIdAs: 'materialId' },
+  { group: 'Lectures and materials', label: 'Upload material', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Lecture material', accept: '', help: 'Verifies a private R2 upload, then attaches it to this lecture.' }, directUpload: { purpose: 'lecture-material', requiresLecture: true, attachMaterial: true }, saveIdAs: 'materialId' },
   { group: 'Lectures and materials', label: 'Download material', method: 'GET', path: '/lectures/:lectureId/materials/:materialId/download', params: [lectureId(), materialId()] },
   { group: 'Lectures and materials', label: 'Rename material', method: 'PATCH', path: '/lectures/:lectureId/materials/:materialId', params: [lectureId(), materialId()], body: [{ name: 'originalFilename', label: 'New filename', required: true, placeholder: 'renamed-material.pdf' }] },
   { group: 'Lectures and materials', label: 'Delete material', method: 'DELETE', path: '/lectures/:lectureId/materials/:materialId', params: [lectureId(), materialId()] },
@@ -133,7 +133,7 @@ const presets: Preset[] = [
     { name: 'frontText', label: 'Front text', type: 'textarea', fullWidth: true, help: 'Provide text, an image key, or both for each side.' }, { name: 'backText', label: 'Back text', type: 'textarea', fullWidth: true },
     { name: 'frontImageKey', label: 'Front image upload key', suggestion: 'flashcardImageKey' }, { name: 'backImageKey', label: 'Back image upload key', suggestion: 'flashcardImageKey' }, { name: 'ordering', label: 'Order', type: 'number', placeholder: '0' },
   ] },
-  { group: 'Flashcards', label: 'Upload flashcard image', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Flashcard image', accept: 'image/jpeg,image/png,image/webp', help: 'Uploads directly to private R2. Accepted formats: JPEG, PNG, or WebP; maximum size is 100 MiB.' }, directUpload: { purpose: 'flashcard-image', requiresLecture: true }, saveObjectKeyAs: 'flashcardImageKey' },
+  { group: 'Flashcards', label: 'Upload flashcard image', method: 'POST', path: '/uploads', params: [lectureId()], file: { label: 'Flashcard image', accept: 'image/jpeg,image/png,image/webp', help: 'Verifies a private R2 upload, then attaches it to this lecture. Accepted formats: JPEG, PNG, or WebP; maximum size is 100 MiB.' }, directUpload: { purpose: 'flashcard-image', requiresLecture: true, attachFlashcardImage: true }, saveObjectKeyAs: 'flashcardImageKey' },
   { group: 'Flashcards', label: 'Update flashcard', method: 'PATCH', path: '/flashcards/:flashcardId', params: [flashcardId()], body: [
     { name: 'frontText', label: 'Front text', type: 'textarea', fullWidth: true }, { name: 'backText', label: 'Back text', type: 'textarea', fullWidth: true },
     { name: 'frontImageKey', label: 'Front image upload key', suggestion: 'flashcardImageKey' }, { name: 'backImageKey', label: 'Back image upload key', suggestion: 'flashcardImageKey' }, { name: 'ordering', label: 'Order', type: 'number' },
@@ -496,7 +496,10 @@ async function sendDirectUpload(preset: Preset, config: DirectUpload, file: File
     throw new Error(`Direct R2 upload failed (${response.status}). Request a new upload URL and try again.`);
   }
   updateLog(entry, 'success', `${response.status} ${response.statusText || 'Uploaded directly to R2'}`);
-  return sendApiRequest('POST', '/uploads/complete', JSON.stringify({ objectKey, ...uploadInput }), undefined, preset);
+  const completed = await sendApiRequest('POST', '/uploads/complete', JSON.stringify({ objectKey, ...uploadInput }), undefined, preset);
+  if (!lectureId || (!config.attachMaterial && !config.attachFlashcardImage)) return completed;
+  const attachmentPath = config.attachMaterial ? 'materials' : 'flashcard-images';
+  return sendApiRequest('POST', `/lectures/${encodeURIComponent(lectureId)}/${attachmentPath}`, JSON.stringify({ uploadKey: objectKey }), undefined, preset);
 }
 
 function buildBody(preset: Preset): BodyInit | undefined {

@@ -155,6 +155,12 @@ async function run() {
     logger.pass(`${name}: R2 direct PUT`, { status: directResponse.status });
     return expect(`${name}: complete direct upload`, await request(`${name}-complete`, actor, 'POST', '/uploads/complete', { json: { objectKey: plan.objectKey, ...input } }), 201);
   }
+  async function attachMaterial(name, actor, lectureId, uploadKey) {
+    return expect(`${name}: attach completed material`, await request(`${name}-attach`, actor, 'POST', `/lectures/${lectureId}/materials`, { json: { uploadKey } }), 201);
+  }
+  async function attachFlashcardImage(name, actor, lectureId, uploadKey) {
+    return expect(`${name}: attach completed flashcard image`, await request(`${name}-attach`, actor, 'POST', `/lectures/${lectureId}/flashcard-images`, { json: { uploadKey } }), 201);
+  }
   function check(name, condition, details = {}) { if (!condition) { logger.fail(name, details); throw new Error(name); } logger.pass(name, details); }
 
   const assets = fixtures(directory, state.runId);
@@ -199,7 +205,8 @@ async function run() {
     check('student video URL is hidden before acceptance', lockedLecture.videoUrl === null && lockedLecture.videoLocked === true);
     expect('student cannot retrieve locked video', await request('student-locked-video', actors.student, 'GET', `/lectures/${ids.lecture}/video`), 403);
     expect('admin updates lecture', await request('patch-main-lecture', actors.admin, 'PATCH', `/lectures/${ids.lecture}`, { json: { description: 'Updated by the automated E2E suite.' } }), 200);
-    const material = await directUpload('admin uploads a real PDF material', actors.admin, 'lecture-material', assets.note, ids.lecture);
+    const uploadedMaterial = await directUpload('admin uploads a real PDF material', actors.admin, 'lecture-material', assets.note, ids.lecture);
+    const material = await attachMaterial('admin uploads a real PDF material', actors.admin, ids.lecture, uploadedMaterial.objectKey);
     ids.material = material.id;
     expect('student lists materials', await request('list-materials', actors.student, 'GET', `/lectures/${ids.lecture}/materials`), 200);
     const downloadedMaterial = await request('download-material', actors.student, 'GET', `/lectures/${ids.lecture}/materials/${ids.material}/download`);
@@ -209,6 +216,8 @@ async function run() {
     expect('admin deletes material', await request('delete-material', actors.admin, 'DELETE', `/lectures/${ids.lecture}/materials/${ids.material}`), 204);
     const front = await directUpload('admin uploads real flashcard front image', actors.admin, 'flashcard-image', assets.image, ids.lecture);
     const back = await directUpload('admin uploads real flashcard back image', actors.admin, 'flashcard-image', assets.image, ids.lecture);
+    await attachFlashcardImage('admin uploads real flashcard front image', actors.admin, ids.lecture, front.objectKey);
+    await attachFlashcardImage('admin uploads real flashcard back image', actors.admin, ids.lecture, back.objectKey);
     const card = expect('admin creates flashcard', await request('create-flashcard', actors.admin, 'POST', `/lectures/${ids.lecture}/flashcards`, { json: { frontImageKey: front.objectKey, backImageKey: back.objectKey, ordering: 3 } }), 201);
     ids.card = card.id;
     const studentCards = expect('student lists flashcards', await request('student-list-flashcards', actors.student, 'GET', `/lectures/${ids.lecture}/flashcards`), 200);
@@ -262,7 +271,8 @@ async function run() {
     expect('admin rejects booking', await request('reject-booking', actors.admin, 'PATCH', `/admin/bookings/${rejectedBooking.id}`, { json: { status: 'REJECTED' } }), 200);
     expect('booking cannot be decided twice', await request('repeat-booking-decision', actors.admin, 'PATCH', `/admin/bookings/${rejectedBooking.id}`, { json: { status: 'ACCEPTED' } }), 409);
     const cleanupLecture = expect('admin creates cleanup lecture', await request('create-cleanup-lecture', actors.admin, 'POST', `/modules/${ids.mainModule}/lectures`, { json: { title: `Cleanup lecture ${state.runId}`, subject: 'E2E', lectureDate: '2026-09-29T12:00:00.000Z', videoUrl: 'https://www.youtube.com/watch?v=3JZ_D3ELwOQ' } }), 201);
-    const cleanupMaterial = await directUpload('admin uploads cleanup material', actors.admin, 'lecture-material', assets.note, cleanupLecture.id);
+    const uploadedCleanupMaterial = await directUpload('admin uploads cleanup material', actors.admin, 'lecture-material', assets.note, cleanupLecture.id);
+    const cleanupMaterial = await attachMaterial('admin uploads cleanup material', actors.admin, cleanupLecture.id, uploadedCleanupMaterial.objectKey);
     check('cleanup material was created', Boolean(cleanupMaterial.id));
     expect('admin deletes lecture and associated private assets', await request('delete-cleanup-lecture', actors.admin, 'DELETE', `/lectures/${cleanupLecture.id}`), 204);
     expect('deleted lecture is unavailable', await request('get-deleted-lecture', actors.student, 'GET', `/lectures/${cleanupLecture.id}`), 404);
