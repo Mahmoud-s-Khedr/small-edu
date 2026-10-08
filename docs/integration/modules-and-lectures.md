@@ -130,7 +130,7 @@ private lecture-material and flashcard-image objects are also removed.
 
 ### `GET /modules/:moduleId/lectures`
 
-**Job:** list lectures in one module.
+**Job:** list lectures in one module, including the full `module` object in each item.
 
 **Path DTO:** `type Path = { moduleId: string }; // UUID`
 
@@ -152,6 +152,7 @@ type Query = {
 type LectureListItem = Omit<Lecture, 'videoUrl'> & {
   videoUrl: string | null;
   videoLocked: boolean;
+  module: Module;
 };
 
 type Response = Paginated<LectureListItem>;

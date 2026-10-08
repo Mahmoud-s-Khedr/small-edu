@@ -100,7 +100,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/modules/{moduleId}', ['Modules'], 'Get a module', envelope(moduleDto), { params: moduleIdParam });
   secured('patch', '/modules/{moduleId}', ['Modules'], 'Update a module (admin)', envelope(moduleDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: modulePatch } } } });
   noContent('delete', '/modules/{moduleId}', ['Modules'], 'Delete a module (admin)', { params: moduleIdParam });
-  secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureDto), { params: moduleIdParam });
+  secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto })), { params: moduleIdParam });
   secured('post', '/modules/{moduleId}/lectures', ['Modules'], 'Create a lecture (admin)', envelope(lectureDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: lectureInput } } } }, 201);
 
   secured('get', '/academic-years', ['Catalogue'], 'List available academic years', envelope(z.array(z.string())));

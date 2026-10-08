@@ -94,11 +94,12 @@ moduleRoutes.get('/:moduleId/lectures', async (c) => {
   const p = pagination(query);
   const database = db(c.env.DB);
   const [items, totalRow] = await Promise.all([
-    database.select().from(lectures).where(and(...filters)).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
+    database.select({ lecture: lectures, module: modules }).from(lectures).innerJoin(modules, eq(lectures.moduleId, modules.id))
+      .where(and(...filters)).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(lectures).where(and(...filters)).get(),
   ]);
   const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), moduleId);
-  return c.json({ data: items.map((lecture) => ({ ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch })), meta: { ...p, total: totalRow?.total ?? 0 } });
+  return c.json({ data: items.map(({ lecture, module }) => ({ ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, module })), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
 moduleRoutes.post('/:moduleId/lectures', requireAdmin, async (c) => {

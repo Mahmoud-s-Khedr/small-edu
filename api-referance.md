@@ -295,7 +295,7 @@ type Path = { moduleId: string };
 
 ### `GET /modules/:moduleId/lectures`
 
-Lists lectures belonging to one module. For a user without accepted module
+Lists lectures belonging to one module, including the full `module` object in each item. For a user without accepted module
 access, `videoUrl` is `null` and `videoLocked` is `true`.
 
 ```ts
@@ -311,6 +311,7 @@ type Query = {
 type LectureListItem = Omit<Lecture, 'videoUrl'> & {
   videoUrl: string | null;
   videoLocked: boolean;
+  module: Module;
 };
 // 200
 type Response = Paginated<LectureListItem>;

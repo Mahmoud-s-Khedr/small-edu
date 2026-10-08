@@ -422,7 +422,13 @@ describe('Medly API', () => {
     ]);
 
     const byModule = await request(`/api/v1/modules/${moduleId}/lectures`, { headers: auth(userId) });
-    expect(await byModule.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: null, videoLocked: true }] });
+    expect(await byModule.json()).toMatchObject({ data: [{
+      id: lectureId, videoUrl: null, videoLocked: true,
+      module: {
+        id: moduleId, title: 'Protected course', number: '2', academicYear: '2026', semester: 'Fall', priceCents: 100,
+        createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+      },
+    }] });
 
     const acrossModules = await request('/api/v1/lectures', { headers: auth(userId) });
     expect(await acrossModules.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: null, videoLocked: true }] });
