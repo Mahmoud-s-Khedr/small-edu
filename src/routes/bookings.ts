@@ -7,6 +7,7 @@ import { conflict, notFound, unauthorized } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { bookingIdParam } from '../lib/validation';
 import { requireAdmin, requireAuth } from '../middleware/auth';
+import { createPresignedDownload } from '../lib/presigned-uploads';
 import type { AppBindings } from '../types';
 
 const createBooking = z.object({ moduleId: z.string().uuid(), receiptKey: z.string().min(1).max(500) });
@@ -14,6 +15,17 @@ const receiptKeyInput = z.object({ receiptKey: z.string().min(1).max(500) });
 const statusBody = z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) });
 export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
+
+async function adminBookingResponse(env: Env, booking: typeof bookingRequests.$inferSelect) {
+  const { receiptKey, ...publicBooking } = booking;
+  return {
+    ...publicBooking,
+    receiptDownloadUrl: await createPresignedDownload(env, receiptKey, {
+      contentType: booking.receiptContentType,
+      filename: booking.receiptFilename,
+    }),
+  };
+}
 
 bookingRoutes.post('/', async (c) => {
   const { moduleId, receiptKey } = createBooking.parse(await c.req.json());
@@ -67,21 +79,17 @@ adminBookingRoutes.get('/', async (c) => {
   const items = await db(c.env.DB).select().from(bookingRequests)
     .where(query.status ? eq(bookingRequests.status, query.status) : undefined)
     .orderBy(desc(bookingRequests.createdAt)).limit(p.limit).offset(p.offset);
-  return c.json({ data: items.map(({ receiptKey: _receiptKey, ...item }) => item), meta: p });
+  return c.json({ data: await Promise.all(items.map((item) => adminBookingResponse(c.env, item))), meta: p });
 });
 
 adminBookingRoutes.get('/:bookingId/receipt', async (c) => {
   const { bookingId } = bookingIdParam.parse(c.req.param());
   const booking = await db(c.env.DB).query.bookingRequests.findFirst({ where: eq(bookingRequests.id, bookingId) });
   if (!booking) throw notFound('Booking request not found');
-  const object = await c.env.STORAGE.get(booking.receiptKey);
-  if (!object || !('body' in object)) throw notFound('Stored receipt not found');
-  const headers = new Headers({
-    'Content-Type': booking.receiptContentType,
-    'Content-Disposition': `attachment; filename="${booking.receiptFilename.replaceAll('"', '')}"`,
-  });
-  object.writeHttpMetadata(headers);
-  return new Response(object.body, { headers });
+  return c.redirect(await createPresignedDownload(c.env, booking.receiptKey, {
+    contentType: booking.receiptContentType,
+    filename: booking.receiptFilename,
+  }), 302);
 });
 
 adminBookingRoutes.patch('/:bookingId', async (c) => {

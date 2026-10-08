@@ -36,16 +36,18 @@ is responding. This is the only public endpoint.
   scoped to one named object and expires after 10 minutes; retrying the PUT
   before expiry replaces that same object.
 - Treat `204 No Content` as a successful response with no JSON to parse.
-- For binary download endpoints, consume the response as bytes/blob/file
-  rather than JSON. The response supplies `Content-Type` and an attachment
-  filename in `Content-Disposition`.
+- Download URL fields (`downloadUrl`, `receiptDownloadUrl`, `frontImageUrl`,
+  and `backImageUrl`) are 10-minute signed R2 `GET` URLs. Use them directly;
+  they set the stored content type and attachment filename where applicable.
+  The two legacy material/receipt download endpoints return `302` redirects to
+  freshly signed equivalents.
 
 ## Standard client error handling
 
 | Status | Client action |
 | --- | --- |
 | `401` | Refresh/retrieve the Firebase token. If the user has just signed in, call `POST /auth/session`; otherwise return to sign-in if refresh fails. |
-| `403` | Keep the user signed in; show the feature as unavailable or locked. A lecture-video `403` means no accepted module access. |
+| `403` | Keep the user signed in; show the feature as unavailable or locked. A lecture-video `403` means the user lacks accepted access to a paid module; modules with `priceCents: 0` are freely available to authenticated users. |
 | `404` | The referenced item no longer exists or is unavailable. Refresh the current screen/list. |
 | `409` | Show the conflict message. Common examples are a duplicate active booking or deciding a booking that was already decided. |
 | `422` | Show field-level validation feedback using `error.details` when useful. |

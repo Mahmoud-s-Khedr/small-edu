@@ -136,12 +136,13 @@ Unlike the standard paginated response, this endpoint currently does not return
 
 ## `GET /admin/bookings/:bookingId/receipt` — Admin
 
-**Job:** download the private receipt for review.
+**Job:** obtain a newly signed private-receipt URL for legacy clients.
 
 **Path DTO:** `type Path = { bookingId: string }; // UUID`
 
-**Expected response — `200 OK`:** binary PDF/JPEG/PNG data with its MIME type
-and an attachment filename. The client never receives the receipt storage key.
+**Expected response — `302 Found`:** redirects to a 10-minute signed R2 `GET`
+URL. Prefer `receiptDownloadUrl` returned by the admin booking list. The client
+never receives the receipt storage key.
 
 ## `PATCH /admin/bookings/:bookingId` — Admin
 

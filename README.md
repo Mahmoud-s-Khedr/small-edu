@@ -10,7 +10,7 @@ See [ROADMAP.md](ROADMAP.md) for the product milestones and current implementati
 - D1 schema and initial migration for users, modules, lectures, private lecture materials, bookings/access, flashcards/progress, and MCQs/choices.
 - Admin-only module, lecture, flashcard, MCQ, material, and booking-decision operations.
 - Video URLs are returned only to module-access users or admins; other lecture materials are authenticated but free.
-- R2 object keys are generated server-side and never exposed as unauthenticated public URLs. Files are downloaded through authenticated Worker routes.
+- R2 object keys are generated server-side and never exposed as public URLs. Every download link is a short-lived, signed R2 `GET` URL issued only after the API authorizes the requester.
 - Flashcard state is per-user; hiding a card changes only that user's state.
 - MCQ list payloads deliberately omit the correct answer. `check-answer` returns the result only after a supplied choice.
 - Firebase ID tokens are verified with Firebase's public signing keys. Firebase claims identify a user; local D1 records remain the source of roles.
@@ -85,7 +85,7 @@ All routes except health require a bearer token. Admin routes additionally requi
 - `GET|POST /api/v1/lectures/:lectureId/flashcards`, `PUT /api/v1/flashcards/:flashcardId/state`
 - `GET|POST /api/v1/lectures/:lectureId/mcqs`, `POST /api/v1/mcqs/:mcqId/check-answer`
 
-Uploads use 10-minute, single-object R2 presigned PUT URLs. Flashcard responses use equivalent short-lived presigned GET URLs for their images. The API authenticates and validates the requested filename, MIME type, and size; the client sends the bytes directly to private R2, then calls a completion endpoint that verifies the stored object's exact size and MIME type before it is attached to application data.
+Uploads and downloads use 10-minute, single-object R2 presigned URLs. Material responses and admin booking responses include equivalent short-lived presigned `GET` URLs, as do flashcard image responses. The API authenticates and validates the requested filename, MIME type, and size; the client sends upload bytes directly to private R2, then calls a completion endpoint that verifies the stored object's exact size and MIME type before it is attached to application data.
 
 Before deploying direct uploads, create an R2 S3 API token limited to **Object Read & Write** for `medly-storage` and set Worker secrets `R2_S3_ACCESS_KEY_ID` and `R2_S3_SECRET_ACCESS_KEY`; set non-secret variables `R2_ACCOUNT_ID` and (if different) `R2_BUCKET_NAME`. Configure the bucket CORS policy to allow `GET` and `PUT` from each browser origin in `CORS_ORIGINS`, allow the `Content-Type` request header, and expose `ETag`.
 

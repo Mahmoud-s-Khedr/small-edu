@@ -8,6 +8,7 @@ import { conflict, forbidden, notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureIdParam, lecturePatch } from '../lib/validation';
 import { deletePrivateObjects } from '../lib/storage';
+import { createPresignedDownload } from '../lib/presigned-uploads';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
@@ -22,6 +23,17 @@ const listFilters = paginationQuery.extend({
 
 export const lectureRoutes = new ApiRouter<AppBindings>('/lectures');
 lectureRoutes.use('*', requireAuth);
+
+async function materialResponse(env: Env, material: typeof lectureMaterials.$inferSelect) {
+  const { objectKey, ...publicMaterial } = material;
+  return {
+    ...publicMaterial,
+    downloadUrl: await createPresignedDownload(env, objectKey, {
+      contentType: material.contentType,
+      filename: material.originalFilename,
+    }),
+  };
+}
 
 lectureRoutes.get('/', async (c) => {
   const query = listFilters.parse(c.req.query());
@@ -93,7 +105,7 @@ lectureRoutes.get('/:lectureId/materials', async (c) => {
   const database = db(c.env.DB);
   if (!await database.query.lectures.findFirst({ where: eq(lectures.id, lectureId) })) throw notFound('Lecture not found');
   const items = await database.select().from(lectureMaterials).where(eq(lectureMaterials.lectureId, lectureId));
-  return c.json({ data: items.map(({ objectKey: _objectKey, ...material }) => material) });
+  return c.json({ data: await Promise.all(items.map((material) => materialResponse(c.env, material))) });
 });
 
 lectureRoutes.post('/:lectureId/materials', requireAdmin, async (c) => {
@@ -120,8 +132,7 @@ lectureRoutes.post('/:lectureId/materials', requireAdmin, async (c) => {
     throw error;
   }
   await database.update(uploads).set({ attachedAt: now }).where(eq(uploads.objectKey, upload.objectKey));
-  const { objectKey: _objectKey, ...response } = item;
-  return c.json({ data: response }, 201);
+  return c.json({ data: await materialResponse(c.env, item) }, 201);
 });
 
 lectureRoutes.get('/:lectureId/video', async (c) => {
@@ -139,14 +150,10 @@ lectureRoutes.get('/:lectureId/materials/:materialId/download', async (c) => {
     where: and(eq(lectureMaterials.id, materialId), eq(lectureMaterials.lectureId, lectureId)),
   });
   if (!material) throw notFound('Material not found');
-  const object = await c.env.STORAGE.get(material.objectKey);
-  if (!object || !('body' in object)) throw notFound('Stored file not found');
-  const headers = new Headers({
-    'Content-Type': material.contentType,
-    'Content-Disposition': `attachment; filename="${material.originalFilename.replaceAll('"', '')}"`,
-  });
-  object.writeHttpMetadata(headers);
-  return new Response(object.body, { headers });
+  return c.redirect(await createPresignedDownload(c.env, material.objectKey, {
+    contentType: material.contentType,
+    filename: material.originalFilename,
+  }), 302);
 });
 
 lectureRoutes.patch('/:lectureId/materials/:materialId', requireAdmin, async (c) => {
@@ -160,8 +167,7 @@ lectureRoutes.patch('/:lectureId/materials/:materialId', requireAdmin, async (c)
   if (!material) throw notFound('Material not found');
   const updatedAt = new Date();
   await database.update(lectureMaterials).set({ originalFilename, updatedAt }).where(eq(lectureMaterials.id, materialId));
-  const { objectKey: _objectKey, ...response } = { ...material, originalFilename, updatedAt };
-  return c.json({ data: response });
+  return c.json({ data: await materialResponse(c.env, { ...material, originalFilename, updatedAt }) });
 });
 
 lectureRoutes.delete('/:lectureId/materials/:materialId', requireAdmin, async (c) => {

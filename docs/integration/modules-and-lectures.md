@@ -158,8 +158,9 @@ type LectureListItem = Omit<Lecture, 'videoUrl'> & {
 type Response = Paginated<LectureListItem>;
 ```
 
-For a student without accepted access to this module, `videoUrl` is `null` and
-`videoLocked` is `true`. Do not treat the absence of a URL as a missing
+For a paid module, a student without accepted access receives `videoUrl: null`
+and `videoLocked: true`. Modules with `priceCents: 0` are freely available to
+every authenticated user. Do not treat the absence of a URL as a missing
 lecture; show the paid-video state instead.
 
 ### `POST /modules/:moduleId/lectures` — Admin
@@ -272,9 +273,10 @@ accepted access to the lecture's module.
 
 ### `GET /lectures/:lectureId/materials`
 
-**Job:** list downloadable material metadata. Private R2 object keys are never
-returned to the client. Any authenticated user can list and download materials;
-unlike video playback, these routes do not require accepted module access.
+**Job:** list downloadable material metadata and 10-minute signed R2 download
+URLs. Private R2 object keys are never returned to the client. Any
+authenticated user can list and download materials; unlike video playback,
+these routes do not require accepted module access.
 
 **Path DTO:** `type Path = { lectureId: string }; // UUID`
 
@@ -306,7 +308,7 @@ Lecture materials have no MIME-type allowlist.
 
 ### `GET /lectures/:lectureId/materials/:materialId/download`
 
-**Job:** download the private material bytes.
+**Job:** obtain a newly signed private-material URL for legacy clients.
 
 **Path DTO**
 
@@ -314,8 +316,9 @@ Lecture materials have no MIME-type allowlist.
 type Path = { lectureId: string; materialId: string }; // UUIDs
 ```
 
-**Expected response — `200 OK`:** binary data with the original MIME type and
-an attachment filename in `Content-Disposition`.
+**Expected response — `302 Found`:** redirects to a 10-minute signed R2 `GET`
+URL. Prefer the `downloadUrl` returned by the material list/create/update
+responses.
 
 ### `PATCH /lectures/:lectureId/materials/:materialId` — Admin
 

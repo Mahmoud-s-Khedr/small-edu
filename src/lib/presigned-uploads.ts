@@ -60,12 +60,20 @@ export async function createPresignedUpload(
 }
 
 /** Creates a short-lived capability to download one private R2 object. */
-export async function createPresignedDownload(env: Env, key: string): Promise<string> {
+export async function createPresignedDownload(
+  env: Env,
+  key: string,
+  options: { contentType?: string; filename?: string } = {},
+): Promise<string> {
   if (!env.R2_ACCOUNT_ID || !env.R2_S3_ACCESS_KEY_ID || !env.R2_S3_SECRET_ACCESS_KEY) {
     throw serviceUnavailable('Direct downloads are not configured');
   }
   const endpoint = new URL(`https://${env.R2_BUCKET_NAME ?? 'medly-storage'}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key.split('/').map(encodeURIComponent).join('/')}`);
   endpoint.searchParams.set('X-Amz-Expires', String(URL_TTL_SECONDS));
+  // These S3 response overrides are part of the signature, so a recipient
+  // cannot alter the MIME type or force a different filename.
+  if (options.contentType) endpoint.searchParams.set('response-content-type', options.contentType);
+  if (options.filename) endpoint.searchParams.set('response-content-disposition', `attachment; filename="${options.filename.replaceAll('"', '')}"`);
   const client = new AwsClient({
     accessKeyId: env.R2_S3_ACCESS_KEY_ID,
     secretAccessKey: env.R2_S3_SECRET_ACCESS_KEY,

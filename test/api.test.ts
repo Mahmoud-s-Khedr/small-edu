@@ -250,7 +250,9 @@ describe('Medly API', () => {
       .toEqual({ user_id: null, receipt_key: key, status: 'PENDING' });
     expect(await env.STORAGE.head(key)).not.toBeNull();
     expect(await env.STORAGE.head(abandonedKey)).not.toBeNull();
-    expect((await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId) })).status).toBe(200);
+    const receiptDownload = await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId), redirect: 'manual' });
+    expect(receiptDownload.status).toBe(302);
+    expect(new URL(receiptDownload.headers.get('Location') ?? '').searchParams.get('X-Amz-Expires')).toBe('600');
     const decision = await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' });
     expect(decision.status).toBe(200);
     expect(await decision.json()).toMatchObject({ data: { userId: null, status: 'ACCEPTED' } });
@@ -440,6 +442,22 @@ describe('Medly API', () => {
     expect(await unlocked.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: 'https://video.example.test/private', videoLocked: false }] });
   });
 
+  it('makes zero-priced module videos available without a booking', async () => {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(moduleId, 'Free course', '3', '2026', 'Fall', 0, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(lectureId, moduleId, 'Free lecture', '', 'Subject', now, 'https://video.example.test/free', now, now),
+    ]);
+
+    const byModule = await request(`/api/v1/modules/${moduleId}/lectures`, { headers: auth(userId) });
+    expect(await byModule.json()).toMatchObject({ data: [{ id: lectureId, videoUrl: 'https://video.example.test/free', videoLocked: false }] });
+
+    const detail = await request(`/api/v1/lectures/${lectureId}`, { headers: auth(userId) });
+    expect(await detail.json()).toMatchObject({ data: { id: lectureId, videoUrl: 'https://video.example.test/free', videoLocked: false } });
+
+    expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(200);
+  });
+
   it('creates a booking and grants video access only when accepted', async () => {
     const now = Date.now();
     await env.DB.batch([
@@ -453,10 +471,12 @@ describe('Medly API', () => {
     const bookingId = (await created.json() as { data: { id: string } }).data.id;
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(403);
     expect((await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(userId) })).status).toBe(403);
-    const receipt = await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId) });
-    expect(receipt.status).toBe(200);
-    expect(receipt.headers.get('Content-Type')).toBe('application/pdf');
-    expect(new TextDecoder().decode(await receipt.arrayBuffer())).toBe('receipt');
+    const receipt = await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId), redirect: 'manual' });
+    expect(receipt.status).toBe(302);
+    const receiptUrl = new URL(receipt.headers.get('Location') ?? '');
+    expect(receiptUrl.origin).toBe('https://medly-storage.test-account.r2.cloudflarestorage.com');
+    expect(receiptUrl.searchParams.get('X-Amz-Expires')).toBe('600');
+    expect(receiptUrl.searchParams.get('X-Amz-Signature')).toBeTruthy();
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' })).status).toBe(200);
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(200);
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'REJECTED' })).status).toBe(409);
@@ -507,7 +527,12 @@ describe('Medly API', () => {
 
     const attached = await json(`/api/v1/lectures/${lectureId}/materials`, 'POST', { uploadKey: plan.objectKey });
     expect(attached.status).toBe(201);
-    expect(await attached.json()).toMatchObject({ data: { lectureId, originalFilename: 'notes.pdf', sizeBytes: 5 } });
+    const attachedMaterial = await attached.json() as { data: { id: string; lectureId: string; originalFilename: string; sizeBytes: number; downloadUrl: string } };
+    expect(attachedMaterial).toMatchObject({ data: { lectureId, originalFilename: 'notes.pdf', sizeBytes: 5 } });
+    expect(new URL(attachedMaterial.data.downloadUrl).searchParams.get('X-Amz-Expires')).toBe('600');
+    const materialDownload = await request(`/api/v1/lectures/${lectureId}/materials/${attachedMaterial.data.id}/download`, { headers: auth(userId), redirect: 'manual' });
+    expect(materialDownload.status).toBe(302);
+    expect(new URL(materialDownload.headers.get('Location') ?? '').searchParams.get('X-Amz-Signature')).toBeTruthy();
     expect((await json(`/api/v1/lectures/${lectureId}/materials`, 'POST', { uploadKey: plan.objectKey })).status).toBe(409);
 
     const imageDetails = { filename: 'card.png', contentType: 'image/png', sizeBytes: 3 };

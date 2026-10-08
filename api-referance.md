@@ -470,8 +470,9 @@ type Response = Success<Upload>;
 
 ### `GET /lectures/:lectureId/materials/:materialId/download`
 
-Downloads the stored private file. The response has the stored content type and
-an `attachment` `Content-Disposition` filename.
+The material response includes `downloadUrl`: a 10-minute signed R2 `GET` URL
+with the stored content type and attachment filename. This legacy route returns
+`302 Found` to a newly signed equivalent URL.
 
 ```ts
 type Path = { lectureId: string; materialId: string };
@@ -599,8 +600,10 @@ type Response = Success<Booking>;
 
 ### `GET /admin/bookings/:bookingId/receipt` — Admin
 
-Downloads the private payment receipt for review. The receipt object key is
-never exposed in a JSON response.
+Admin booking-list items include `receiptDownloadUrl`: a 10-minute signed R2
+`GET` URL for the private receipt. The receipt object key is never exposed in a
+JSON response. This legacy route returns `302 Found` to a newly signed
+equivalent URL.
 
 ```ts
 type Path = { bookingId: string };
