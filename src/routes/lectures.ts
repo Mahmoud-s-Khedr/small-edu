@@ -59,7 +59,7 @@ lectureRoutes.get('/', async (c) => {
     : new Set((moduleIds.length ? await database.select({ moduleId: moduleAccess.moduleId }).from(moduleAccess)
       .where(and(eq(moduleAccess.userId, user.id), inArray(moduleAccess.moduleId, moduleIds))) : []).map((access) => access.moduleId));
   return c.json({ data: items.map(({ lecture, module }) => {
-    const canWatch = accessibleModuleIds.has(lecture.moduleId);
+    const canWatch = module.priceCents === 0 || accessibleModuleIds.has(lecture.moduleId);
     return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, academicYear: module.academicYear, semester: module.semester, module };
   }), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
