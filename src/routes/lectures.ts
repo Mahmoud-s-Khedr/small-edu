@@ -1,9 +1,9 @@
-import { and, count, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { flashcards, lectureMaterials, lectures, moduleAccess, modules, uploads } from '../db/schema';
-import { hasModuleVideoAccess, requireModuleVideoAccess } from '../lib/access';
+import { flashcards, lectureMaterials, lectures, modules, uploads } from '../db/schema';
+import { requireModuleVideoAccess, withModuleAccessStatus } from '../lib/access';
 import { conflict, forbidden, notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureIdParam, lecturePatch } from '../lib/validation';
@@ -52,14 +52,10 @@ lectureRoutes.get('/', async (c) => {
       .where(where).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(lectures).innerJoin(modules, eq(lectures.moduleId, modules.id)).where(where).get(),
   ]);
-  const user = c.get('user');
-  const moduleIds = [...new Set(items.map(({ lecture }) => lecture.moduleId))];
-  const accessibleModuleIds = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN'
-    ? new Set(moduleIds)
-    : new Set((moduleIds.length ? await database.select({ moduleId: moduleAccess.moduleId }).from(moduleAccess)
-      .where(and(eq(moduleAccess.userId, user.id), inArray(moduleAccess.moduleId, moduleIds))) : []).map((access) => access.moduleId));
-  return c.json({ data: items.map(({ lecture, module }) => {
-    const canWatch = module.priceCents === 0 || accessibleModuleIds.has(lecture.moduleId);
+  const moduleDtos = await withModuleAccessStatus(c.env, c.get('user'), items.map((item) => item.module));
+  return c.json({ data: items.map(({ lecture }, index) => {
+    const module = moduleDtos[index]!;
+    const canWatch = module.access_status === 'approved' || module.access_status === 'full_access';
     return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, academicYear: module.academicYear, semester: module.semester, module };
   }), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
@@ -69,8 +65,9 @@ lectureRoutes.get('/:lectureId', async (c) => {
   const row = await db(c.env.DB).select({ lecture: lectures, module: modules }).from(lectures)
     .innerJoin(modules, eq(lectures.moduleId, modules.id)).where(eq(lectures.id, lectureId)).get();
   if (!row) throw notFound('Lecture not found');
-  const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), row.lecture.moduleId);
-  return c.json({ data: { ...row.lecture, videoUrl: canWatch ? row.lecture.videoUrl : null, videoLocked: !canWatch, module: row.module } });
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [row.module]);
+  const canWatch = module!.access_status === 'approved' || module!.access_status === 'full_access';
+  return c.json({ data: { ...row.lecture, videoUrl: canWatch ? row.lecture.videoUrl : null, videoLocked: !canWatch, module } });
 });
 
 lectureRoutes.patch('/:lectureId', requireAdmin, async (c) => {

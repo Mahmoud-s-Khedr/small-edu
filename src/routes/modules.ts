@@ -6,7 +6,7 @@ import { flashcards, lectureMaterials, lectures, modules } from '../db/schema';
 import { notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
 import { lectureInput, lecturePatch, moduleIdParam, moduleInput, modulePatch } from '../lib/validation';
-import { hasModuleVideoAccess } from '../lib/access';
+import { withModuleAccessStatus } from '../lib/access';
 import { deletePrivateObjects } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
@@ -38,7 +38,7 @@ moduleRoutes.get('/', async (c) => {
     database.select().from(modules).where(where).orderBy(desc(modules.createdAt)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(modules).where(where).get(),
   ]);
-  return c.json({ data: items, meta: { ...p, total: totalRow?.total ?? 0 } });
+  return c.json({ data: await withModuleAccessStatus(c.env, c.get('user'), items), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
 moduleRoutes.post('/', requireAdmin, async (c) => {
@@ -46,14 +46,16 @@ moduleRoutes.post('/', requireAdmin, async (c) => {
   const now = new Date();
   const item = { id: crypto.randomUUID(), ...input, createdAt: now, updatedAt: now };
   await db(c.env.DB).insert(modules).values(item);
-  return c.json({ data: item }, 201);
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [item]);
+  return c.json({ data: module }, 201);
 });
 
 moduleRoutes.get('/:moduleId', async (c) => {
   const { moduleId } = moduleIdParam.parse(c.req.param());
   const item = await db(c.env.DB).query.modules.findFirst({ where: eq(modules.id, moduleId) });
   if (!item) throw notFound('Module not found');
-  return c.json({ data: item });
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [item]);
+  return c.json({ data: module });
 });
 
 moduleRoutes.patch('/:moduleId', requireAdmin, async (c) => {
@@ -63,7 +65,8 @@ moduleRoutes.patch('/:moduleId', requireAdmin, async (c) => {
   const existing = await database.query.modules.findFirst({ where: eq(modules.id, moduleId) });
   if (!existing) throw notFound('Module not found');
   await database.update(modules).set({ ...input, updatedAt: new Date() }).where(eq(modules.id, moduleId));
-  return c.json({ data: { ...existing, ...input, updatedAt: new Date() } });
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [{ ...existing, ...input, updatedAt: new Date() }]);
+  return c.json({ data: module });
 });
 
 moduleRoutes.delete('/:moduleId', requireAdmin, async (c) => {
@@ -98,8 +101,12 @@ moduleRoutes.get('/:moduleId/lectures', async (c) => {
       .where(and(...filters)).orderBy(desc(lectures.lectureDate)).limit(p.limit).offset(p.offset),
     database.select({ total: count() }).from(lectures).where(and(...filters)).get(),
   ]);
-  const canWatch = await hasModuleVideoAccess(c.env, c.get('user'), moduleId);
-  return c.json({ data: items.map(({ lecture, module }) => ({ ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, module })), meta: { ...p, total: totalRow?.total ?? 0 } });
+  const moduleDtos = await withModuleAccessStatus(c.env, c.get('user'), items.map((item) => item.module));
+  return c.json({ data: items.map(({ lecture }, index) => {
+    const module = moduleDtos[index]!;
+    const canWatch = module.access_status === 'approved' || module.access_status === 'full_access';
+    return { ...lecture, videoUrl: canWatch ? lecture.videoUrl : null, videoLocked: !canWatch, module };
+  }), meta: { ...p, total: totalRow?.total ?? 0 } });
 });
 
 moduleRoutes.post('/:moduleId/lectures', requireAdmin, async (c) => {

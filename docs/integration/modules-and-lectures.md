@@ -13,6 +13,7 @@ type Module = {
   academicYear: string;
   semester: string;
   priceCents: number;
+  access_status: 'default' | 'full_access' | 'pending' | 'approved';
   createdAt: string;
   updatedAt: string;
 };
@@ -61,6 +62,20 @@ Returns distinct lecture subjects. It accepts optional `moduleId` (UUID),
 subject picker, use `GET /subjects?moduleId=<moduleId>`.
 
 ## Modules
+
+Every returned module, including the `module` nested in lecture responses,
+includes `access_status` for the authenticated user:
+
+| Value | Meaning |
+| --- | --- |
+| `default` | Student has no video access and no pending booking, including rejected bookings. |
+| `full_access` | User is an `ADMIN` or `SUPER_ADMIN`. |
+| `pending` | Student submitted a payment receipt in a booking that is awaiting approval. |
+| `approved` | Student has granted module access, or the module is free (`priceCents: 0`). |
+
+Admin access takes precedence over all booking states; granted/free access
+takes precedence over pending bookings. Status is computed per request and is
+not a stored field on the module. A pending booking does not unlock videos.
 
 ### `GET /modules`
 
@@ -213,6 +228,7 @@ type LectureListItem = Omit<Lecture, 'videoUrl'> & {
   videoLocked: boolean;
   academicYear: string;
   semester: string;
+  module: Module;
 };
 
 type Response = Paginated<LectureListItem>;
@@ -230,6 +246,7 @@ type Response = Paginated<LectureListItem>;
 type Response = Success<Omit<Lecture, 'videoUrl'> & {
   videoUrl: string | null;
   videoLocked: boolean;
+  module: Module;
 }>;
 ```
 

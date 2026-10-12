@@ -461,6 +461,84 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(200);
   });
 
+  it.each([
+    { name: 'student without access', actor: userId, price: 100, booking: null, granted: false, status: 'default' },
+    { name: 'student with rejected payment', actor: userId, price: 100, booking: 'REJECTED', granted: false, status: 'default' },
+    { name: 'student awaiting approval', actor: userId, price: 100, booking: 'PENDING', granted: false, status: 'pending' },
+    { name: 'student with granted access', actor: userId, price: 100, booking: 'ACCEPTED', granted: true, status: 'approved' },
+    { name: 'student with access and pending booking', actor: userId, price: 100, booking: 'PENDING', granted: true, status: 'approved' },
+    { name: 'student with a free module', actor: userId, price: 0, booking: null, granted: false, status: 'approved' },
+    { name: 'admin', actor: adminId, price: 100, booking: 'PENDING', granted: false, status: 'full_access' },
+    { name: 'super admin', actor: superAdminId, price: 100, booking: null, granted: false, status: 'full_access' },
+  ])('returns module access_status for $name in every read response', async ({ actor, price, booking, granted, status }) => {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(moduleId, 'Access status course', '8', '2026', 'Fall', price, now, now),
+      env.DB.prepare('INSERT INTO lectures (id, module_id, title, description, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(lectureId, moduleId, 'Access status lecture', '', 'Subject', now, 'https://video.example.test/status', now, now),
+    ]);
+    if (booking) {
+      await env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(crypto.randomUUID(), actor, moduleId, `payment-receipts/${actor}/status.pdf`, 'status.pdf', 'application/pdf', 1, booking, now, now).run();
+    }
+    if (granted) {
+      await env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(actor, moduleId, now).run();
+    }
+    const module = { id: moduleId, access_status: status };
+    const canWatch = status === 'approved' || status === 'full_access';
+    const lecture = { id: lectureId, module, videoLocked: !canWatch, videoUrl: canWatch ? 'https://video.example.test/status' : null };
+    for (const [path, expected] of [
+      ['/api/v1/modules', { data: [module] }],
+      [`/api/v1/modules/${moduleId}`, { data: module }],
+      [`/api/v1/modules/${moduleId}/lectures`, { data: [lecture] }],
+      ['/api/v1/lectures', { data: [lecture] }],
+      [`/api/v1/lectures/${lectureId}`, { data: lecture }],
+    ] as const) {
+      const response = await request(path, { headers: auth(actor) });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject(expected);
+    }
+    expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(actor) })).status).toBe(canWatch ? 200 : 403);
+    if (price > 0) {
+      const otherStudent = await request(`/api/v1/modules/${moduleId}`, { headers: auth(secondUserId) });
+      expect(await otherStudent.json()).toMatchObject({ data: { access_status: 'default' } });
+    }
+  });
+
+  it('returns independent module statuses in a mixed catalogue', async () => {
+    const now = Date.now();
+    const cases = [
+      { id: crypto.randomUUID(), price: 0, status: 'approved' },
+      { id: crypto.randomUUID(), price: 100, status: 'default' },
+      { id: crypto.randomUUID(), price: 100, status: 'pending' },
+      { id: crypto.randomUUID(), price: 100, status: 'approved' },
+    ];
+    await env.DB.batch(cases.map((item, index) => env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(item.id, 'Mixed catalogue', String(index), '2026', 'Fall', item.price, now, now)));
+    await env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(crypto.randomUUID(), userId, cases[2]!.id, `payment-receipts/${userId}/mixed.pdf`, 'mixed.pdf', 'application/pdf', 1, 'PENDING', now, now).run();
+    await env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(userId, cases[3]!.id, now).run();
+    const response = await request('/api/v1/modules', { headers: auth(userId) });
+    const body = await response.json() as { data: Array<{ id: string; access_status: string }> };
+    expect(body.data).toHaveLength(4);
+    for (const item of cases) {
+      expect(body.data.find((module) => module.id === item.id)?.access_status).toBe(item.status);
+    }
+  });
+
+  it('includes full_access when admins create or update modules', async () => {
+    const created = await json('/api/v1/modules', 'POST', {
+      title: 'Admin module', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 100,
+    });
+    expect(created.status).toBe(201);
+    const body = await created.json() as { data: { id: string; access_status: string } };
+    expect(body.data.access_status).toBe('full_access');
+    const updated = await json(`/api/v1/modules/${body.data.id}`, 'PATCH', { title: 'Updated module' }, superAdminId);
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ data: { title: 'Updated module', access_status: 'full_access' } });
+  });
+
   it('creates a booking and grants video access only when accepted', async () => {
     const now = Date.now();
     await env.DB.batch([
@@ -472,6 +550,8 @@ describe('Medly API', () => {
     const created = await json('/api/v1/bookings', 'POST', { moduleId, receiptKey: key }, userId);
     expect(created.status).toBe(201);
     const bookingId = (await created.json() as { data: { id: string } }).data.id;
+    expect(await (await request(`/api/v1/modules/${moduleId}`, { headers: auth(userId) })).json())
+      .toMatchObject({ data: { access_status: 'pending' } });
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(403);
     expect((await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(userId) })).status).toBe(403);
     const receipt = await request(`/api/v1/admin/bookings/${bookingId}/receipt`, { headers: auth(adminId), redirect: 'manual' });
@@ -481,6 +561,8 @@ describe('Medly API', () => {
     expect(receiptUrl.searchParams.get('X-Amz-Expires')).toBe('600');
     expect(receiptUrl.searchParams.get('X-Amz-Signature')).toBeTruthy();
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' })).status).toBe(200);
+    expect(await (await request(`/api/v1/modules/${moduleId}`, { headers: auth(userId) })).json())
+      .toMatchObject({ data: { access_status: 'approved' } });
     expect((await request(`/api/v1/lectures/${lectureId}/video`, { headers: auth(userId) })).status).toBe(200);
     expect((await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'REJECTED' })).status).toBe(409);
   });

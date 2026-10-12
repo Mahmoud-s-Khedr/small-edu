@@ -11,8 +11,13 @@ const dateTime = z.string().datetime().openapi({ example: '2026-09-28T12:00:00.0
 const auth = [{ bearerAuth: [] }];
 
 const user = z.object({ id: uuid, email: z.string().email(), name: z.string(), role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']) }).openapi('User');
-const moduleDto = moduleInput.extend({ id: uuid, createdAt: dateTime, updatedAt: dateTime }).openapi('Module');
+const moduleDto = moduleInput.extend({
+  id: uuid, createdAt: dateTime, updatedAt: dateTime,
+  access_status: z.enum(['default', 'full_access', 'pending', 'approved'])
+    .describe('Current user access: default = no access; full_access = admin; pending = receipt awaiting approval; approved = granted access or free module'),
+}).openapi('Module');
 const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, createdAt: dateTime, updatedAt: dateTime, videoLocked: z.boolean().optional() }).openapi('Lecture');
+const lectureReadDto = lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto });
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime, downloadUrl: z.string().url() }).openapi('Material');
 const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
 const adminBooking = booking.extend({ receiptDownloadUrl: z.string().url() }).openapi('AdminBooking');
@@ -101,15 +106,15 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/modules/{moduleId}', ['Modules'], 'Get a module', envelope(moduleDto), { params: moduleIdParam });
   secured('patch', '/modules/{moduleId}', ['Modules'], 'Update a module (admin)', envelope(moduleDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: modulePatch } } } });
   noContent('delete', '/modules/{moduleId}', ['Modules'], 'Delete a module (admin)', { params: moduleIdParam });
-  secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto })), { params: moduleIdParam });
+  secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureReadDto), { params: moduleIdParam });
   secured('post', '/modules/{moduleId}/lectures', ['Modules'], 'Create a lecture (admin)', envelope(lectureDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: lectureInput } } } }, 201);
 
   secured('get', '/academic-years', ['Catalogue'], 'List available academic years', envelope(z.array(z.string())));
   secured('get', '/semesters', ['Catalogue'], 'List available semesters, optionally for an academic year', envelope(z.array(z.string())), { query: z.object({ academicYear: z.string().optional() }) });
   secured('get', '/subjects', ['Catalogue'], 'List available lecture subjects', envelope(z.array(z.string())), { query: z.object({ moduleId: uuid.optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
 
-  secured('get', '/lectures', ['Lectures'], 'List lectures', paginated(lectureDto));
-  secured('get', '/lectures/{lectureId}', ['Lectures'], 'Get a lecture', envelope(lectureDto), { params: lectureIdParam });
+  secured('get', '/lectures', ['Lectures'], 'List lectures', paginated(lectureReadDto.extend({ academicYear: z.string(), semester: z.string() })));
+  secured('get', '/lectures/{lectureId}', ['Lectures'], 'Get a lecture', envelope(lectureReadDto), { params: lectureIdParam });
   secured('patch', '/lectures/{lectureId}', ['Lectures'], 'Update a lecture (admin)', envelope(lectureDto), { params: lectureIdParam, body: { content: { 'application/json': { schema: lecturePatch } } } });
   noContent('delete', '/lectures/{lectureId}', ['Lectures'], 'Delete a lecture (admin)', { params: lectureIdParam });
   secured('get', '/lectures/{lectureId}/materials', ['Lectures'], 'List lecture materials', envelope(z.array(material)), { params: lectureIdParam });
