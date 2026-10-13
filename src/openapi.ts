@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import type { Env } from 'hono';
+import { adminBookingFilters, bookingFilters } from './lib/booking-filters';
 import {
   authSessionInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
   lecturePatch, mcqIdParam, mcqInput, mcqPatch, moduleIdParam, moduleInput,
@@ -132,8 +133,10 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
 
   add({ method: 'delete', path: '/bookings/receipt', tags: ['Bookings'], summary: 'Receipt deletion disabled; payment receipts are retained', security: auth, responses: { 409: { description: 'Payment receipts cannot be deleted', content: { 'application/json': { schema: error } } }, 401: { description: 'Authentication required', content: { 'application/json': { schema: error } } } }, request: { body: { content: { 'application/json': { schema: z.object({ receiptKey: z.string() }) } } } } });
   secured('post', '/bookings', ['Bookings'], 'Create a booking request', envelope(booking), { body: { content: { 'application/json': { schema: z.object({ moduleId: uuid, receiptKey: z.string() }) } } } }, 201);
-  secured('get', '/bookings', ['Bookings'], 'List the current user’s booking requests', envelope(z.array(booking)));
-  secured('get', '/admin/bookings', ['Admin'], 'List booking requests with short-lived signed R2 receipt URLs (admin)', paginated(adminBooking));
+  secured('get', '/bookings', ['Bookings'], 'List the current user’s booking requests', envelope(z.array(booking)), { query: bookingFilters });
+  secured('get', '/admin/bookings', ['Admin'], 'List booking requests with short-lived signed R2 receipt URLs (admin)',
+    z.object({ data: z.array(adminBooking), meta: z.object({ page: z.number().int(), pageSize: z.number().int(), limit: z.number().int(), offset: z.number().int() }) }),
+    { query: adminBookingFilters });
   secured('patch', '/admin/bookings/{bookingId}', ['Admin'], 'Accept or reject a booking (admin)', envelope(booking), { params: z.object({ bookingId: uuid }), body: { content: { 'application/json': { schema: z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) }) } } } });
   add({ method: 'get', path: '/admin/bookings/{bookingId}/receipt', tags: ['Admin'], summary: 'Redirect to a short-lived signed R2 receipt download URL (admin)', security: auth, request: { params: z.object({ bookingId: uuid }) }, responses: { 302: { description: 'Redirect to signed R2 GET URL' }, 401: { description: 'Missing or invalid Firebase ID token', content: { 'application/json': { schema: error } } } } });
   secured('get', '/admin/users', ['Admin'], 'List users (super admin)', envelope(z.array(user)));

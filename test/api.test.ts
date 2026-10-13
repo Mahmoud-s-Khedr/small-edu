@@ -596,6 +596,57 @@ describe('Medly API', () => {
     expect(await updated.json()).toMatchObject({ data: { title: 'Updated module', access_status: 'full_access' } });
   });
 
+  it('filters both booking lists by status and creation date before admin pagination', async () => {
+    const rows = [
+      { id: crypto.randomUUID(), user: userId, status: 'REJECTED', date: '2026-09-30T23:59:59.999Z' },
+      { id: crypto.randomUUID(), user: userId, status: 'ACCEPTED', date: '2026-10-01T00:00:00.000Z' },
+      { id: crypto.randomUUID(), user: userId, status: 'REJECTED', date: '2026-10-01T12:00:00.000Z' },
+      { id: crypto.randomUUID(), user: userId, status: 'REJECTED', date: '2026-10-01T23:59:59.999Z' },
+      { id: crypto.randomUUID(), user: secondUserId, status: 'PENDING', date: '2026-10-01T18:00:00.000Z' },
+      { id: crypto.randomUUID(), user: userId, status: 'REJECTED', date: '2026-10-02T00:00:00.000Z' },
+    ];
+    await env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(moduleId, 'Booking filters', '2', '2026', 'Fall', 100, Date.now(), Date.now()).run();
+    await env.DB.batch(rows.map((row) => env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(row.id, row.user, moduleId, `payment-receipts/${row.user}/${row.id}.pdf`, 'receipt.pdf', 'application/pdf', 1, row.status, Date.parse(row.date), Date.parse(row.date))));
+    const list = async (path: string, query = '', actor = userId) => {
+      const response = await request(`/api/v1/${path}${query ? `?${query}` : ''}`, { headers: auth(actor) });
+      expect(response.status).toBe(200);
+      return await response.json() as { data: Array<{ id: string; receiptDownloadUrl?: string; receiptKey?: string }>; meta?: unknown };
+    };
+    const day = 'from=2026-10-01&to=2026-10-01';
+    expect((await list('bookings')).data.map((row) => row.id)).toEqual([rows[5]!.id, rows[3]!.id, rows[2]!.id, rows[1]!.id, rows[0]!.id]);
+    expect((await list('bookings', day)).data.map((row) => row.id)).toEqual([rows[3]!.id, rows[2]!.id, rows[1]!.id]);
+    expect((await list('bookings', `${day}&status=REJECTED`)).data.map((row) => row.id)).toEqual([rows[3]!.id, rows[2]!.id]);
+    expect((await list('bookings', 'status=ACCEPTED')).data.map((row) => row.id)).toEqual([rows[1]!.id]);
+    expect((await list('bookings', 'status=PENDING')).data).toEqual([]);
+    expect((await list('bookings', 'from=2026-10-02')).data.map((row) => row.id)).toEqual([rows[5]!.id]);
+    expect((await list('bookings', 'to=2026-09-30')).data.map((row) => row.id)).toEqual([rows[0]!.id]);
+    const instant = new URLSearchParams({ from: '2026-10-01T15:00:00+03:00', to: '2026-10-01T12:00:00Z' });
+    expect((await list('bookings', instant.toString())).data.map((row) => row.id)).toEqual([rows[2]!.id]);
+    const admin = await list('admin/bookings', `${day}&status=REJECTED&page=2&pageSize=1`, adminId);
+    expect(admin.data.map((row) => row.id)).toEqual([rows[2]!.id]);
+    expect(admin.meta).toEqual({ page: 2, pageSize: 1, limit: 1, offset: 1 });
+    expect(admin.data[0]!.receiptDownloadUrl).toContain('X-Amz-Signature=');
+    expect(admin.data[0]).not.toHaveProperty('receiptKey');
+    expect((await list('admin/bookings', `${day}&status=PENDING`, adminId)).data.map((row) => row.id)).toEqual([rows[4]!.id]);
+    expect((await list('admin/bookings', day, adminId)).data).toHaveLength(4);
+    expect((await list('admin/bookings', '', adminId)).data).toHaveLength(6);
+    expect((await request(`/api/v1/admin/bookings?${day}`, { headers: auth(userId) })).status).toBe(403);
+  });
+
+  it.each([
+    'status=INVALID', 'from=bad-date', 'to=2026-02-30', 'from=',
+    'from=2026-10-02&to=2026-10-01',
+    'from=2026-10-01T13:00:00Z&to=2026-10-01T12:00:00Z',
+    'from=2026-10-01T12:00:00',
+  ])('rejects invalid booking filters: %s', async (query) => {
+    for (const path of ['bookings', 'admin/bookings']) {
+      const response = await request(`/api/v1/${path}?${query}`, { headers: auth(adminId) });
+      expect(response.status).toBe(422);
+    }
+  });
+
   it('creates a booking and grants video access only when accepted', async () => {
     const now = Date.now();
     await env.DB.batch([

@@ -593,9 +593,20 @@ type Response = Success<Booking>;
 Lists the authenticated user's booking requests, newest first.
 
 ```ts
+type Query = {
+  status?: BookingStatus;
+  from?: string;
+  to?: string;
+};
+
 // 200
 type Response = Success<Booking[]>;
 ```
+
+Both booking lists filter `createdAt` with inclusive `from` and `to` bounds.
+Use `YYYY-MM-DD` (UTC; `to` includes the whole day) or an ISO timestamp with
+`Z` or a timezone offset. Bounds are optional and combine with `status`.
+Invalid statuses/dates and reversed ranges return `422`.
 
 ### `GET /admin/bookings` — Admin
 
@@ -604,12 +615,14 @@ type Query = {
   page?: number;
   pageSize?: number;
   status?: BookingStatus;
+  from?: string;
+  to?: string;
 };
 
 // 200
 // Note: this endpoint's meta has page/pageSize/limit/offset, but not total.
 type Response = {
-  data: Booking[];
+  data: Array<Booking & { receiptDownloadUrl: string }>;
   meta: { page: number; pageSize: number; limit: number; offset: number };
 };
 ```

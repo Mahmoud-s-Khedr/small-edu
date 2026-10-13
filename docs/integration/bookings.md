@@ -104,7 +104,24 @@ of submission status. A key outside the caller's receipt prefix also returns
 
 **Job:** list the signed-in student's booking history, newest first.
 
-**Request DTO:** none.
+**Request DTO:** optional query parameters:
+
+```ts
+type Query = {
+  status?: BookingStatus;
+  from?: string;
+  to?: string;
+};
+```
+
+Both lists filter by booking `createdAt`. `from` and `to` are inclusive and
+accept `YYYY-MM-DD` or an ISO timestamp with `Z` or a timezone offset.
+Date-only values use UTC: `from` starts at midnight and `to` includes the
+whole day. Either bound can be omitted. All supplied filters are combined.
+Invalid statuses, invalid dates, or a `from` later than `to` return `422`.
+
+Example: `GET /bookings?status=PENDING&from=2026-10-01&to=2026-10-13`.
+Without filters, the endpoint returns the complete history. It is not paginated.
 
 **Expected response — `200 OK`:** `Success<Booking[]>`.
 
@@ -119,6 +136,8 @@ type Query = {
   page?: number;
   pageSize?: number;
   status?: BookingStatus;
+  from?: string;
+  to?: string;
 };
 ```
 
@@ -126,13 +145,17 @@ type Query = {
 
 ```ts
 type Response = {
-  data: Booking[];
+  data: Array<Booking & { receiptDownloadUrl: string }>;
   meta: { page: number; pageSize: number; limit: number; offset: number };
 };
 ```
 
 Unlike the standard paginated response, this endpoint currently does not return
 `meta.total`.
+
+The same date and status rules as `GET /bookings` apply. Filtering happens
+before pagination; `page` defaults to 1 and `pageSize` to 20 (maximum 50).
+Example: `GET /admin/bookings?status=PENDING&from=2026-10-01&to=2026-10-13&page=1&pageSize=20`.
 
 ## `GET /admin/bookings/:bookingId/receipt` — Admin
 

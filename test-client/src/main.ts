@@ -74,6 +74,11 @@ apiBaseInput.value = 'https://medly-api.mahmoud-s-khedr-2.workers.dev/api/v1';
 
 const page = (): Field => ({ name: 'page', label: 'Page', type: 'number', placeholder: '1', help: 'Optional; defaults to 1.' });
 const pageSize = (): Field => ({ name: 'pageSize', label: 'Page size', type: 'number', placeholder: '20', help: '1–100; defaults to 20.' });
+const bookingListFilters = (): Field[] => [
+  { name: 'status', label: 'Status', type: 'select', options: [['', 'All statuses'], ['PENDING', 'Pending'], ['ACCEPTED', 'Accepted'], ['REJECTED', 'Rejected']] },
+  { name: 'from', label: 'Created from', placeholder: '2026-10-01', help: 'YYYY-MM-DD (UTC) or ISO timestamp with timezone; inclusive.' },
+  { name: 'to', label: 'Created to', placeholder: '2026-10-13', help: 'YYYY-MM-DD includes the whole UTC day, or use an ISO timestamp with timezone.' },
+];
 const moduleId = (): Field => ({ name: 'moduleId', label: 'Module ID', placeholder: 'Choose or paste a module UUID', required: true, suggestion: 'moduleId' });
 const lectureId = (): Field => ({ name: 'lectureId', label: 'Lecture ID', placeholder: 'Choose or paste a lecture UUID', required: true, suggestion: 'lectureId' });
 const materialId = (): Field => ({ name: 'materialId', label: 'Material ID', placeholder: 'Choose or paste a material UUID', required: true, suggestion: 'materialId' });
@@ -129,8 +134,8 @@ const presets: Preset[] = [
   { group: 'Bookings', label: 'Upload receipt', method: 'POST', path: '/uploads', file: { label: 'Receipt file', accept: '.pdf,image/jpeg,image/png', help: 'Uploads directly to private R2. Accepted formats: PDF, JPEG, or PNG; maximum size is 100 MiB.' }, directUpload: { purpose: 'payment-receipt' }, saveObjectKeyAs: 'receiptKey' },
   { group: 'Bookings', label: 'Check receipt deletion is blocked', method: 'DELETE', path: '/bookings/receipt', body: [{ name: 'receiptKey', label: 'Receipt upload key', required: true, suggestion: 'receiptKey' }] },
   { group: 'Bookings', label: 'Create booking request', method: 'POST', path: '/bookings', saveIdAs: 'bookingId', body: [{ ...moduleId(), required: true }, { name: 'receiptKey', label: 'Receipt upload key', required: true, suggestion: 'receiptKey' }] },
-  { group: 'Bookings', label: 'List my bookings', method: 'GET', path: '/bookings', saveIdAs: 'bookingId' },
-  { group: 'Bookings', label: 'List all bookings', method: 'GET', path: '/admin/bookings', query: [page(), pageSize(), { name: 'status', label: 'Status', type: 'select', options: [['', 'All statuses'], ['PENDING', 'Pending'], ['ACCEPTED', 'Accepted'], ['REJECTED', 'Rejected']] }], saveIdAs: 'bookingId' },
+  { group: 'Bookings', label: 'List my bookings', method: 'GET', path: '/bookings', query: bookingListFilters(), saveIdAs: 'bookingId' },
+  { group: 'Bookings', label: 'List all bookings', method: 'GET', path: '/admin/bookings', query: [page(), pageSize(), ...bookingListFilters()], saveIdAs: 'bookingId' },
   { group: 'Bookings', label: 'Download booking receipt', method: 'GET', path: '/admin/bookings/:bookingId/receipt', params: [bookingId()] },
   { group: 'Bookings', label: 'Accept or reject booking', method: 'PATCH', path: '/admin/bookings/:bookingId', params: [bookingId()], body: [{ name: 'status', label: 'Decision', type: 'select', required: true, options: [['ACCEPTED', 'Accept'], ['REJECTED', 'Reject']] }] },
   { group: 'Flashcards', label: 'List lecture flashcards', method: 'GET', path: '/lectures/:lectureId/flashcards', params: [lectureId()], saveIdAs: 'flashcardId' },

@@ -1,10 +1,11 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { bookingRequests, modules } from '../db/schema';
 import { conflict, notFound, unauthorized } from '../lib/errors';
-import { pagination, paginationQuery } from '../lib/pagination';
+import { pagination } from '../lib/pagination';
+import { adminBookingFilters, bookingDateBoundary, bookingFilters } from '../lib/booking-filters';
 import { bookingIdParam } from '../lib/validation';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { createPresignedDownload } from '../lib/presigned-uploads';
@@ -13,6 +14,14 @@ import type { AppBindings } from '../types';
 const createBooking = z.object({ moduleId: z.string().uuid(), receiptKey: z.string().min(1).max(500) });
 const receiptKeyInput = z.object({ receiptKey: z.string().min(1).max(500) });
 const statusBody = z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) });
+function bookingConditions(query: { status?: 'PENDING' | 'ACCEPTED' | 'REJECTED'; from?: string; to?: string }): SQL[] {
+  const filters: SQL[] = [];
+  if (query.status) filters.push(eq(bookingRequests.status, query.status));
+  if (query.from) filters.push(gte(bookingRequests.createdAt, bookingDateBoundary(query.from)));
+  if (query.to) filters.push(lte(bookingRequests.createdAt, bookingDateBoundary(query.to, true)));
+  return filters;
+}
+
 export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
 
@@ -67,17 +76,20 @@ bookingRoutes.delete('/receipt', async (c) => {
 
 bookingRoutes.get('/', async (c) => {
   const user = c.get('user');
-  const items = await db(c.env.DB).select().from(bookingRequests).where(eq(bookingRequests.userId, user.id)).orderBy(desc(bookingRequests.createdAt));
+  const query = bookingFilters.parse(c.req.query());
+  const items = await db(c.env.DB).select().from(bookingRequests)
+    .where(and(eq(bookingRequests.userId, user.id), ...bookingConditions(query)))
+    .orderBy(desc(bookingRequests.createdAt));
   return c.json({ data: items.map(({ receiptKey: _receiptKey, ...item }) => item) });
 });
 
 export const adminBookingRoutes = new ApiRouter<AppBindings>('/admin/bookings');
 adminBookingRoutes.use('*', requireAuth, requireAdmin);
 adminBookingRoutes.get('/', async (c) => {
-  const query = paginationQuery.extend({ status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']).optional() }).parse(c.req.query());
+  const query = adminBookingFilters.parse(c.req.query());
   const p = pagination(query);
   const items = await db(c.env.DB).select().from(bookingRequests)
-    .where(query.status ? eq(bookingRequests.status, query.status) : undefined)
+    .where(and(...bookingConditions(query)))
     .orderBy(desc(bookingRequests.createdAt)).limit(p.limit).offset(p.offset);
   return c.json({ data: await Promise.all(items.map((item) => adminBookingResponse(c.env, item))), meta: p });
 });
