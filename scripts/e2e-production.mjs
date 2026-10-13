@@ -70,7 +70,7 @@ async function prepare() {
     const accountPassword = password();
     const signup = await firebaseRequest(apiKey, 'accounts:signUp', { email, password: accountPassword, returnSecureToken: true, displayName: `Medly E2E ${role} ${runId}` });
     await firebaseRequest(apiKey, 'accounts:sendOobCode', { requestType: 'VERIFY_EMAIL', idToken: signup.idToken });
-    users[role] = { email, password: accountPassword, localId: signup.localId };
+    users[role] = { deviceId: randomUUID(), email, password: accountPassword, localId: signup.localId };
     logger.pass(`Firebase account created and verification email sent: ${role}`, { email });
   }
   const state = { version: 1, runId, apiBase: (process.env.MEDLY_E2E_API_BASE ?? defaultApiBase).replace(/\/+$/, ''), firebaseApiKey: apiKey, createdAt: new Date().toISOString(), users };
@@ -105,6 +105,8 @@ async function run() {
   const absoluteStatePath = resolve(process.cwd(), statePath);
   const state = json(absoluteStatePath);
   const directory = dirname(absoluteStatePath);
+  for (const account of Object.values(state.users)) account.deviceId ??= randomUUID();
+  writeState(directory, state);
   const logger = new Logger(directory);
   logger.event('run-start', { runId: state.runId, apiBase: state.apiBase });
   let actors;
@@ -116,7 +118,10 @@ async function run() {
   }
   async function request(name, actor, method, path, options = {}) {
     const headers = new Headers(options.headers);
-    if (actor) headers.set('Authorization', `Bearer ${actor.idToken}`);
+    if (actor) {
+      headers.set('Authorization', `Bearer ${actor.idToken}`);
+      if (!headers.has('X-Device-ID')) headers.set('X-Device-ID', actor.deviceId);
+    }
     let body;
     if (options.json !== undefined) { headers.set('content-type', 'application/json'); body = JSON.stringify(options.json); }
     const response = await fetch(`${state.apiBase}${path}`, { method, headers, body });
@@ -175,6 +180,12 @@ async function run() {
       expect(`session provisioning is idempotent: ${role}`, await request(`session-${role}`, actors[role], 'POST', '/auth/session'), 200);
       const me = expect(`current identity: ${role}`, await request(`me-${role}`, actors[role], 'GET', '/me'), 200);
       ids[role] = me.id;
+      check(`device UUID omitted from profile: ${role}`, !JSON.stringify(me).includes(actors[role].deviceId) && !Object.hasOwn(me, 'device'));
+      const mismatch = await request(`device-mismatch-${role}`, actors[role], 'GET', '/me', { headers: { 'X-Device-ID': randomUUID() } });
+      expect(`different device is rejected: ${role}`, mismatch, 401);
+      check(`device mismatch code: ${role}`, mismatch.payload?.error?.code === 'DEVICE_MISMATCH');
+      const malformed = await request(`device-invalid-${role}`, actors[role], 'POST', '/auth/session', { headers: { 'X-Device-ID': '' } });
+      expect(`invalid device header is rejected: ${role}`, malformed, 422);
     }
     if (flag('--bootstrap-superadmin')) {
       logger.event('bootstrap-superadmin', { email: actors.superadmin.email });

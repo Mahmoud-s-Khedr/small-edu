@@ -194,7 +194,7 @@ type Response = Success<{ status: 'ok' }>;
 
 Provisions the authenticated Firebase identity as a local Medly user. Requires
 `Authorization: Bearer <Firebase ID token>` and always returns `200` on a valid,
-verified token; repeated calls are safe.
+verified token and accepted device registration; repeated matching-device calls are safe.
 
 ```ts
 type Response = Success<{ user: User; created: boolean; email_verified: true }>;
@@ -211,7 +211,7 @@ The response status is `401`; tokens with an invalid signature, issuer, audience
 or expiry remain indistinguishable generic authorization failures.
 
 If the Firebase UID is already linked, the existing local user is returned
-unchanged. A legacy user with the same verified email and no linked Firebase UID
+after checking or registering the device. A legacy user with the same verified email and no linked Firebase UID
 is linked in place. A new user gets role `"USER"` and either Firebase's display
 name or the email local part. A verified email already linked to another Firebase
 UID returns `409 CONFLICT`.
@@ -875,3 +875,7 @@ type Response = Success<{ correct: boolean; correctChoiceId: string }>;
   URLs expire after 10 minutes and must be treated as bearer tokens.
 - The API accepts dates through JavaScript date coercion. ISO 8601 UTC strings
   are the portable client format.
+
+## One-device access
+
+Every protected endpoint, including `/auth/session`, requires a persistent UUID v4 in `X-Device-ID`. See [the device integration contract](docs/integration/authentication-and-users.md#device-registration-logout-and-reset) for logout, admin reset, and error handling.

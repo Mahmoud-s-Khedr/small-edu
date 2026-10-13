@@ -3,8 +3,8 @@ import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { users } from '../db/schema';
-import { conflict, notFound } from '../lib/errors';
-import { requireAuth, requireSuperAdmin } from '../middleware/auth';
+import { conflict, forbidden, notFound } from '../lib/errors';
+import { requireAdmin, requireAuth, requireSuperAdmin } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
 const userIdParam = z.object({ userId: z.string().uuid() });
@@ -13,9 +13,9 @@ const userIdParam = z.object({ userId: z.string().uuid() });
 const roleInput = z.object({ role: z.enum(['USER', 'ADMIN']) });
 
 export const adminUserRoutes = new ApiRouter<AppBindings>('/admin/users');
-adminUserRoutes.use('*', requireAuth, requireSuperAdmin);
+adminUserRoutes.use('*', requireAuth, requireAdmin);
 
-adminUserRoutes.get('/', async (c) => {
+adminUserRoutes.get('/', requireSuperAdmin, async (c) => {
   const items = await db(c.env.DB).select({
     id: users.id,
     email: users.email,
@@ -27,7 +27,7 @@ adminUserRoutes.get('/', async (c) => {
   return c.json({ data: items });
 });
 
-adminUserRoutes.patch('/:userId/role', async (c) => {
+adminUserRoutes.patch('/:userId/role', requireSuperAdmin, async (c) => {
   const { userId } = userIdParam.parse(c.req.param());
   const { role } = roleInput.parse(await c.req.json());
   const database = db(c.env.DB);
@@ -37,5 +37,22 @@ adminUserRoutes.patch('/:userId/role', async (c) => {
 
   const updatedAt = new Date();
   await database.update(users).set({ role, updatedAt }).where(eq(users.id, userId));
-  return c.json({ data: { ...user, role, updatedAt } });
+  return c.json({ data: { id: user.id, email: user.email, name: user.name, role, createdAt: user.createdAt, updatedAt } });
+});
+
+adminUserRoutes.post('/:userId/reset-device', async (c) => {
+  const { userId } = userIdParam.parse(c.req.param());
+  const actor = c.get('user');
+  const updated = await c.env.DB.prepare(`UPDATE users SET device = NULL,
+    device_released_at = MAX(COALESCE(device_released_at, 0), ?), updated_at = ?
+    WHERE id = ? AND deletion_requested_at IS NULL AND (? = 'SUPER_ADMIN' OR role = 'USER')
+    RETURNING id`).bind(Date.now(), Date.now(), userId, actor.role).first();
+  if (!updated) {
+    const target = await db(c.env.DB).query.users.findFirst({ where: eq(users.id, userId) });
+    if (!target) throw notFound('User not found');
+    if (target.deletionRequestedAt) throw conflict('This account is being deleted');
+    throw forbidden('Admins may only reset USER accounts');
+  }
+  console.info(JSON.stringify({ action: 'device_reset', actorId: actor.id, userId }));
+  return c.body(null, 204);
 });

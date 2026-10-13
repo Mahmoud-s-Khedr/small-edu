@@ -20,6 +20,8 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
   role: text('role', { enum: ['USER', 'ADMIN', 'SUPER_ADMIN'] }).notNull().default('USER'),
+  device: text('device'),
+  deviceReleasedAt: integer('device_released_at', { mode: 'timestamp_ms' }),
   deletionRequestedAt: integer('deletion_requested_at', { mode: 'timestamp_ms' }),
   ...timestamps,
 }, (table) => [check('users_role_check', sql`${table.role} IN ('USER', 'ADMIN', 'SUPER_ADMIN')`)]);
@@ -27,6 +29,7 @@ export const users = sqliteTable('users', {
 // No foreign key: jobs survive removal of the account they are cleaning up.
 export const accountDeletionJobs = sqliteTable('account_deletion_jobs', {
   firebaseUid: text('firebase_uid').primaryKey(),
+  deviceHash: text('device_hash'),
   userId: text('user_id').notNull(),
   requestedAt: integer('requested_at', { mode: 'timestamp_ms' }).notNull(),
   firebaseDeletedAt: integer('firebase_deleted_at', { mode: 'timestamp_ms' }),

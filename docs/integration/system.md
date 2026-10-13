@@ -46,7 +46,7 @@ is responding. This is the only public endpoint.
 
 | Status | Client action |
 | --- | --- |
-| `401` | Refresh/retrieve the Firebase token. If the user has just signed in, call `POST /auth/session`; otherwise return to sign-in if refresh fails. |
+| `401` | Handle the code: mismatch signs out Firebase; unregistered calls `/auth/session`; reauthentication requires a new sign-in. See the authentication guide. |
 | `403` | Keep the user signed in; show the feature as unavailable or locked. A lecture-video `403` means the user lacks accepted access to a paid module; modules with `priceCents: 0` are freely available to authenticated users. |
 | `404` | The referenced item no longer exists or is unavailable. Refresh the current screen/list. |
 | `409` | Show the conflict message. Common examples are a duplicate active booking or deciding a booking that was already decided. |
