@@ -4,6 +4,7 @@ import {
   authSessionInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
   lecturePatch, mcqIdParam, mcqInput, mcqPatch, moduleIdParam, moduleInput,
   modulePatch, profileUpdateInput,
+  paymentMethodIdParam, paymentMethodInput, paymentMethodPatch,
 } from './lib/validation';
 
 const uuid = z.string().uuid().openapi({ example: '11111111-1111-4111-8111-111111111111' });
@@ -11,6 +12,7 @@ const dateTime = z.string().datetime().openapi({ example: '2026-09-28T12:00:00.0
 const auth = [{ bearerAuth: [] }];
 
 const user = z.object({ id: uuid, email: z.string().email(), name: z.string(), role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']) }).openapi('User');
+const paymentMethod = paymentMethodInput.extend({ id: uuid, createdAt: dateTime, updatedAt: dateTime }).openapi('PaymentMethod');
 const moduleDto = moduleInput.extend({
   id: uuid, createdAt: dateTime, updatedAt: dateTime,
   access_status: z.enum(['default', 'full_access', 'pending', 'approved'])
@@ -102,6 +104,10 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
 });
 
   secured('get', '/modules', ['Modules'], 'List modules', paginated(moduleDto), { query: z.object({ page: z.string().optional(), pageSize: z.string().optional(), number: z.string().optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
+  secured('get', '/payment-methods', ['Payment methods'], 'List all payment methods', envelope(z.array(paymentMethod)));
+  secured('post', '/payment-methods', ['Payment methods'], 'Create a payment method (admin)', envelope(paymentMethod), { body: { content: { 'application/json': { schema: paymentMethodInput } } } }, 201);
+  secured('patch', '/payment-methods/{paymentMethodId}', ['Payment methods'], 'Update a payment method (admin)', envelope(paymentMethod), { params: paymentMethodIdParam, body: { content: { 'application/json': { schema: paymentMethodPatch } } } });
+  noContent('delete', '/payment-methods/{paymentMethodId}', ['Payment methods'], 'Delete a payment method (admin)', { params: paymentMethodIdParam });
   secured('post', '/modules', ['Modules'], 'Create a module (admin)', envelope(moduleDto), { body: { content: { 'application/json': { schema: moduleInput } } } }, 201);
   secured('get', '/modules/{moduleId}', ['Modules'], 'Get a module', envelope(moduleDto), { params: moduleIdParam });
   secured('patch', '/modules/{moduleId}', ['Modules'], 'Update a module (admin)', envelope(moduleDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: modulePatch } } } });

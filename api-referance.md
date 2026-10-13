@@ -18,6 +18,34 @@ strings, for example `"2026-09-16T12:00:00.000Z"`.
 > grant privileged access; `ADMIN` and `SUPER_ADMIN` exist only in the local D1 user record. The API
 > rejects unverified-email tokens.
 
+## Payment methods
+
+Payment methods provide manual-transfer instructions with `key`, `value`, and
+`description`. All endpoints require authentication; writes require `ADMIN`
+or `SUPER_ADMIN`.
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/payment-methods` | `200 { data: PaymentMethod[] }`, all methods sorted by key |
+| POST | `/payment-methods` | `201 { data: PaymentMethod }` |
+| PATCH | `/payment-methods/:paymentMethodId` | `200 { data: PaymentMethod }` |
+| DELETE | `/payment-methods/:paymentMethodId` | `204`, no body |
+
+```ts
+type PaymentMethodInput = { key: string; value: string; description: string };
+type PaymentMethod = PaymentMethodInput & {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+POST requires all three fields. PATCH accepts a nonempty subset. Strings are
+trimmed: key is 1–100 characters, value 1–2,000, and description 0–10,000.
+Keys are unique and case-sensitive; duplicates return `409 CONFLICT`.
+Missing methods return `404` on edit/delete. Invalid input returns `422`.
+The list has no pagination. See [the integration guide](docs/integration/payment-methods.md).
+
 ## Conventions
 
 Successful JSON responses use one of these envelopes:

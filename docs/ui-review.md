@@ -345,8 +345,8 @@ Request the protected video endpoint only when playback begins.
 The supplied booking screens correctly present payment as a manual transfer
 followed by receipt review. The current API supports receipt upload, pending
 booking creation, booking-history status, and admin acceptance/rejection. It
-does not manage payment instructions, payment-provider accounts, or transfer
-verification itself.
+also manages manual-transfer instructions through `/payment-methods`; it
+does not verify transfers itself.
 
 ### Screen state and API mapping
 
@@ -409,13 +409,13 @@ Either choice is viable, but the product must choose one explicit contract:
 In either case, validate file type and size before upload for a clear user
 message, while still handling server-side `400 BAD_REQUEST` validation errors.
 
-### Payment instructions are not API data
+### Payment instructions
 
-The displayed **InstaPay Account**, account handle, and account name do not
-come from the current Medly API. The screen needs an intentional source for
-these values, such as reviewed client configuration or a future CMS/settings
-endpoint. Do not hard-code production payment details into an app build if they
-may change.
+The displayed payment instructions come from `GET /api/v1/payment-methods`.
+Each method provides `key`, `value`, and `description`; admins can create,
+edit, and delete methods through the same resource. Use this list instead of
+embedding production payment details in the client build. See
+[payment-methods.md](integration/payment-methods.md) for the contract.
 
 Similarly, the module API provides `priceCents` but no currency code. The app
 can display `EGP 120` only when EGP is a defined client/product configuration;

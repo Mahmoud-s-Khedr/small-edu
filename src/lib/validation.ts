@@ -8,6 +8,14 @@ export const lectureIdParam = z.object({ lectureId: z.string().uuid() });
 export const flashcardIdParam = z.object({ flashcardId: z.string().uuid() });
 export const mcqIdParam = z.object({ mcqId: z.string().uuid() });
 export const bookingIdParam = z.object({ bookingId: z.string().uuid() });
+export const paymentMethodIdParam = z.object({ paymentMethodId: z.string().uuid() });
+export const paymentMethodInput = z.object({
+  key: z.string().trim().min(1).max(100),
+  value: z.string().trim().min(1).max(2_000),
+  description: z.string().trim().max(10_000),
+});
+export const paymentMethodPatch = paymentMethodInput.partial()
+  .refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 
 export const authSessionInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),

@@ -36,6 +36,14 @@ export const accountDeletionJobs = sqliteTable('account_deletion_jobs', {
   lastError: text('last_error'),
 }, (table) => [index('account_deletion_jobs_retry_idx').on(table.completedAt, table.nextAttemptAt)]);
 
+export const paymentMethods = sqliteTable('payment_methods', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  value: text('value').notNull(),
+  description: text('description').notNull(),
+  ...timestamps,
+});
+
 export const modules = sqliteTable('modules', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),

@@ -9,6 +9,7 @@ you are implementing.
 | [authentication-and-users.md](authentication-and-users.md) | Firebase sign-in, local session provisioning, current user, and super-admin user roles |
 | [modules-and-lectures.md](modules-and-lectures.md) | Module and lecture catalogues, video access, materials, and direct material uploads |
 | [bookings.md](bookings.md) | Payment-receipt direct uploads, booking requests, and admin decisions |
+| [payment-methods.md](payment-methods.md) | Manual-transfer instructions and admin CRUD |
 | [flashcards.md](flashcards.md) | Flashcard content, private-image uploads, and per-user study state |
 | [mcqs.md](mcqs.md) | Multiple-choice question content, correct-choice flags, and answer checks |
 | [system.md](system.md) | Health check, request conventions, direct-upload protocol, errors, pagination, and binary downloads |

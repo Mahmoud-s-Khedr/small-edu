@@ -80,9 +80,14 @@ const materialId = (): Field => ({ name: 'materialId', label: 'Material ID', pla
 const flashcardId = (): Field => ({ name: 'flashcardId', label: 'Flashcard ID', placeholder: 'Choose or paste a flashcard UUID', required: true, suggestion: 'flashcardId' });
 const mcqId = (): Field => ({ name: 'mcqId', label: 'MCQ ID', placeholder: 'Choose or paste an MCQ UUID', required: true, suggestion: 'mcqId' });
 const bookingId = (): Field => ({ name: 'bookingId', label: 'Booking ID', placeholder: 'Choose or paste a booking UUID', required: true, suggestion: 'bookingId' });
+const paymentMethodId = (): Field => ({ name: 'paymentMethodId', label: 'Payment method ID', required: true, suggestion: 'paymentMethodId' });
 const userId = (): Field => ({ name: 'userId', label: 'User ID', placeholder: 'Choose or paste a user UUID', required: true, suggestion: 'userId' });
 
 const presets: Preset[] = [
+  { group: 'Payment methods', label: 'List payment methods', method: 'GET', path: '/payment-methods', saveIdAs: 'paymentMethodId' },
+  { group: 'Payment methods', label: 'Create payment method', method: 'POST', path: '/payment-methods', saveIdAs: 'paymentMethodId', body: [{ name: 'key', label: 'Key', required: true, placeholder: 'instapay' }, { name: 'value', label: 'Value', required: true, placeholder: 'your-account@instapay' }, { name: 'description', label: 'Description', type: 'textarea', required: true }] },
+  { group: 'Payment methods', label: 'Edit payment method', method: 'PATCH', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()], body: [{ name: 'key', label: 'Key' }, { name: 'value', label: 'Value' }, { name: 'description', label: 'Description', type: 'textarea' }] },
+  { group: 'Payment methods', label: 'Delete payment method', method: 'DELETE', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()] },
   { group: 'System and identity', label: 'Health check', method: 'GET', path: '/health' },
   { group: 'System and identity', label: 'Provision Firebase session', method: 'POST', path: '/auth/session' },
   { group: 'System and identity', label: 'Current user', method: 'GET', path: '/me', saveIdAs: 'userId' },

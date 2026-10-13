@@ -2,6 +2,7 @@ import migration from '../drizzle/0000_initial.sql?raw';
 import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
 import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
+import paymentMethodsMigration from '../drizzle/0004_payment_methods.sql?raw';
 import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion } from '../src/lib/account-deletion';
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -116,6 +117,7 @@ beforeAll(async () => {
     .toEqual({ user_id: null, receipt_key: 'payment-receipts/migration.pdf' });
   expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
   await env.DB.batch(uploadsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(paymentMethodsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
 });
 
 afterAll(() => vi.unstubAllGlobals());
@@ -125,7 +127,7 @@ beforeEach(async () => {
   deletedUids = [];
   oauthAssertions = [];
   await env.DB.batch([
-    'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'uploads', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
+    'payment_methods', 'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'uploads', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
   await seed();
   authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
@@ -135,6 +137,57 @@ beforeEach(async () => {
 });
 
 describe('Medly API', () => {
+  it('manages payment methods and exposes the current list to students', async () => {
+    const path = '/api/v1/payment-methods';
+    expect(await (await request(path, { headers: auth(userId) })).json()).toEqual({ data: [] });
+    const create = await json(path, 'POST', { key: ' instapay ', value: ' medly@instapay ', description: ' Transfer to Medly ' });
+    expect(create.status).toBe(201);
+    const { data: item } = await create.json() as { data: { id: string; createdAt: string; updatedAt: string } };
+    expect(await (await request(path, { headers: auth(userId) })).json()).toEqual({ data: [{
+      ...item, key: 'instapay', value: 'medly@instapay', description: 'Transfer to Medly',
+    }] });
+    const duplicate = await json(path, 'POST', { key: 'instapay', value: 'other', description: '' });
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({ error: { code: 'CONFLICT' } });
+    const update = await json(`${path}/${item.id}`, 'PATCH', { value: 'new@instapay', description: '' }, superAdminId);
+    expect(update.status).toBe(200);
+    expect(await update.json()).toMatchObject({ data: { id: item.id, key: 'instapay', value: 'new@instapay', description: '', createdAt: item.createdAt } });
+    const second = await json(path, 'POST', { key: 'bank', value: '12345', description: 'Bank transfer' });
+    const { data: other } = await second.json() as { data: { id: string } };
+    expect((await json(`${path}/${other.id}`, 'PATCH', { key: 'instapay' })).status).toBe(409);
+    expect((await json(`${path}/${item.id}`, 'PATCH', { key: 'wallet' })).status).toBe(200);
+    const list = await (await request(path, { headers: auth(userId) })).json() as { data: { key: string; value: string }[] };
+    expect(list.data.map((entry) => entry.key)).toEqual(['bank', 'wallet']);
+    expect(list.data[0]!.value).toBe('12345');
+    expect((await request(`${path}/${item.id}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
+    expect((await request(`${path}/${item.id}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(404);
+    expect((await json(`${path}/${item.id}`, 'PATCH', { description: 'missing' })).status).toBe(404);
+    expect(await (await request(path, { headers: auth(userId) })).json()).toMatchObject({ data: [{ id: other.id, key: 'bank' }] });
+  });
+
+  it('protects payment method writes and validates input', async () => {
+    const path = '/api/v1/payment-methods';
+    const input = { key: 'instapay', value: 'medly@instapay', description: 'Transfer to Medly' };
+    const target = `${path}/${moduleId}`;
+    expect((await request(path)).status).toBe(401);
+    expect((await request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })).status).toBe(401);
+    expect((await request(target, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })).status).toBe(401);
+    expect((await request(target, { method: 'DELETE' })).status).toBe(401);
+    expect((await json(path, 'POST', input, userId)).status).toBe(403);
+    expect((await json(target, 'PATCH', input, userId)).status).toBe(403);
+    expect((await request(target, { method: 'DELETE', headers: auth(userId) })).status).toBe(403);
+    for (const body of [
+      { ...input, key: '   ' }, { ...input, value: '   ' },
+      { key: 'instapay', value: 'account' }, { ...input, description: null },
+      { ...input, key: 'x'.repeat(101) }, { ...input, value: 'x'.repeat(2001) },
+      { ...input, description: 'x'.repeat(10001) },
+    ]) expect((await json(path, 'POST', body)).status).toBe(422);
+    expect((await json(target, 'PATCH', {})).status).toBe(422);
+    expect((await json(target, 'PATCH', { unknown: 'field' })).status).toBe(422);
+    expect((await json(`${path}/invalid`, 'PATCH', { value: 'account' })).status).toBe(422);
+    expect((await request(`${path}/invalid`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(422);
+  });
+
   it('serves generated Swagger documentation without authentication', async () => {
     const [ui, spec] = await Promise.all([
       request('/api/v1/docs'),
@@ -147,6 +200,10 @@ describe('Medly API', () => {
     expect(document.paths).toHaveProperty('/academic-years');
     expect(document.paths).toHaveProperty('/semesters');
     expect(document.paths).toHaveProperty('/subjects');
+    expect(document.paths['/payment-methods']).toHaveProperty('get');
+    expect(document.paths['/payment-methods']).toHaveProperty('post');
+    expect(document.paths['/payment-methods/{paymentMethodId}']).toHaveProperty('patch');
+    expect(document.paths['/payment-methods/{paymentMethodId}']).toHaveProperty('delete');
     expect(document.paths['/me']).toHaveProperty('delete.responses.202');
     expect(document.paths).toHaveProperty('/lectures/{lectureId}/mcqs');
     expect(document.components.schemas).toHaveProperty('Module');
