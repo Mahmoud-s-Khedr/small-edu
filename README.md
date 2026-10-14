@@ -52,7 +52,7 @@ Firebase test accounts and pauses only for email verification.
 
 Firebase Auth provides email/password, Google, and Apple sign-in in the mobile/web client. The client sends Firebase's ID token as `Authorization: Bearer <Firebase ID token>` to this Worker; the Worker verifies its RS256 signature with Firebase's public key set and validates its expiry, issued-at time, audience, issuer, subject, and verified email. The Worker never receives a password. Token verification needs only public keys. Account deletion additionally uses server-side service-account credentials; the Worker does not need a Firebase client API key.
 
-After any Firebase login, call `POST /api/v1/auth/session` once with `getIdToken()`. It creates or links the local Medly account and returns `{ data: { user, created } }`. Every protected call, including session provisioning, also requires a persistent installation UUID v4 in `X-Device-ID`. The first device registers; another is blocked until backend logout or authorized admin reset. Later protected calls use a current/refreshed Firebase ID token and the same UUID. A valid Firebase token alone cannot access protected data until this provisioning step has completed. Email/password users must verify their email before this call; unverified tokens are deliberately rejected.
+After any Firebase login, call `POST /api/v1/auth/session` once with `getIdToken()`. It creates or links the local Medly account and returns `{ data: { user, created } }`. Later protected calls use a current/refreshed Firebase ID token. A valid Firebase token alone cannot access protected data until this provisioning step has completed. Email/password users must verify their email before this call; unverified tokens are deliberately rejected.
 
 - A Firebase UID already linked to a local account returns that account unchanged.
 - A verified-email match without an external subject links the Firebase UID while preserving the local profile and D1 role.
@@ -134,5 +134,3 @@ Use backward-compatible database changes: expand the schema first, deploy code t
 ## Deliberate non-features
 
 Video hosting stays external. PDF annotations/offline persistence, card shuffle/fullscreen, quiz navigation/progress, localization, and screenshot restrictions are client concerns. There are no annotation, quiz-history, cache, queue, Redis, or custom auth tables/services.
-
-Device rollout and super-admin recovery: [authentication runbook](docs/authentication.md#coordinated-device-enforcement-rollout).

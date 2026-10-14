@@ -7,10 +7,9 @@ Read [README.md](README.md) first for the base URL and common envelopes.
 1. Sign in with the Firebase client SDK using verified email/password, Google,
    or Apple.
 2. Obtain a current Firebase ID token with `getIdToken()`.
-3. Generate one UUID v4 per installation/browser profile and persist it. Call
-   `POST /auth/session` using the token and `X-Device-ID: <UUID>`.
+3. Call `POST /auth/session` using that token.
 4. Use a current/refreshed token in the `Authorization` header for every later
-   protected request, together with the same `X-Device-ID`.
+   protected request.
 
 The Worker does not receive a password. It rejects tokens whose email is not
 verified. New local accounts are always created with the `USER` role; Firebase
@@ -33,7 +32,10 @@ type AdminUser = User & {
 };
 
 // Returned by PATCH /admin/users/:userId/role.
-type UpdatedAdminUser = AdminUser;
+// `externalSubject` is the linked Firebase UID, or null for an unlinked legacy account.
+type UpdatedAdminUser = AdminUser & {
+  externalSubject: string | null;
+};
 ```
 
 ## `POST /auth/session`
@@ -42,8 +44,7 @@ type UpdatedAdminUser = AdminUser;
 Call once after every Firebase login, before protected API use. It is
 idempotent, so retrying it is safe.
 
-**Authentication:** verified Firebase bearer token and persistent UUID v4 in
-`X-Device-ID` required.
+**Authentication:** Firebase bearer token required.
 
 **Request DTO:** an optional body may provide a display name while creating a
 new local account. The value is trimmed and must be 1–100 characters. It is
@@ -53,7 +54,6 @@ safe to retry and is not a profile-edit endpoint.
 ```http
 POST /auth/session
 Authorization: Bearer <Firebase ID token>
-X-Device-ID: <persistent installation UUID v4>
 Content-Type: application/json
 
 { "name": "Sara Ali" }
@@ -68,7 +68,6 @@ prefix. Email/password registration should send the name collected at sign-up.
 ```ts
 type Response = Success<{
   user: User;
-  email_verified: true;
   created: boolean; // true only when a new local Medly user was created
 }>;
 ```
@@ -82,8 +81,7 @@ linked to a different Firebase identity.
 **Job:** returns the currently authenticated local Medly user and role. Use it
 to restore client session state or decide whether to show admin controls.
 
-**Authentication:** verified Firebase bearer token and persistent UUID v4 in
-`X-Device-ID` required.
+**Authentication:** Firebase bearer token required.
 
 **Request DTO:** none.
 
@@ -98,8 +96,7 @@ type Response = Success<User>;
 **Job:** updates the current user’s local display name. It does not change the
 Firebase profile, email address, sign-in methods, or role.
 
-**Authentication:** verified Firebase bearer token and persistent UUID v4 in
-`X-Device-ID` required.
+**Authentication:** Firebase bearer token required.
 
 **Request DTO**
 
@@ -126,7 +123,7 @@ type Response = Success<{ status: 'pending' | 'completed' }>;
 ```
 
 On acceptance, clear the local session and sign out of Firebase. Processing and
-retries continue in the Worker. A valid token and the same device UUID for the same UID can safely retry
+retries continue in the Worker. A valid token for the same UID can safely retry
 an accepted request after the local account is blocked or removed.
 
 **Errors:** `401 REAUTHENTICATION_REQUIRED` means reauthenticate with Firebase
@@ -180,44 +177,3 @@ type Response = Success<UpdatedAdminUser>;
 `SUPER_ADMIN` cannot be granted, changed, or removed through this endpoint; it
 is controlled by deployment-time administration. Trying to modify a super
 admin returns `409 CONFLICT`.
-
-## Device registration, logout, and reset
-
-The first `/auth/session` request claims an unregistered account. Repeating it
-with the same UUID is safe. All protected routes enforce the registered UUID,
-including admins, super admins, and account deletion. Ordinary routes never
-register a device. UUID casing is normalized; UUIDs are omitted from responses.
-
-Generate a UUID once with `crypto.randomUUID()` on web and keep it in browser
-storage. Mobile clients must persist their UUID in installation storage across
-app restarts and logout; do not regenerate it on each request or sign-in.
-This restricts app installations or browser profiles. Copying a UUID can bypass
-it. Downloaded content and external video playback are outside this restriction.
-
-| Response | Client action |
-| --- | --- |
-| `422 VALIDATION_ERROR` | Supply a valid UUID v4 in `X-Device-ID`. |
-| `401 DEVICE_MISMATCH` | Sign out of Firebase; show that another device is registered. Keep the UUID and do not retry registration automatically. |
-| `401 DEVICE_NOT_REGISTERED` | Call `/auth/session` once before retrying the request. |
-| `401 REAUTHENTICATION_REQUIRED` | Prompt for a new Firebase sign-in, then call `/auth/session`. Token refresh alone is insufficient. |
-
-`POST /auth/logout` requires both credentials and returns `204`. Call it before
-Firebase sign-out, then clear the appropriate local cached data while retaining
-the UUID. If the backend call fails, explain that the registration may still
-require an administrator reset. A delayed logout with another UUID cannot clear
-the current registration.
-
-`POST /admin/users/:userId/reset-device` returns `204`. An `ADMIN` may reset
-`USER` accounts; a `SUPER_ADMIN` may reset any account, including their own.
-Regular users cannot reset registrations. Unknown accounts return `404`;
-accounts undergoing deletion return `409`. Resetting an already unregistered
-account also records a release timestamp. Reset actions log the actor and target
-user IDs, never tokens or device UUIDs.
-
-After logout or reset, Firebase `auth_time` must be strictly later than the
-release timestamp before any device can register. There is no maximum sign-in
-age for registration. Firebase `auth_time` has second precision, so a sign-in
-in the same second as release may require another interactive sign-in after
-that second. Account deletion retains its separate five-minute sign-in rule;
-accepted deletion retries require the accepted UUID, checked against a hash
-stored in the durable deletion job even after the local user is removed.

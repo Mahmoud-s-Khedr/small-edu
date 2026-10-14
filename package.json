@@ -15,8 +15,7 @@
     "seed:superadmin": "node scripts/seed-superadmin.mjs",
     "e2e:prepare": "node scripts/e2e-production.mjs prepare",
     "e2e:run": "node scripts/e2e-production.mjs run",
-    "deploy": "wrangler deploy",
-    "recover:superadmin": "node scripts/reset-superadmin-device.mjs"
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@hono/swagger-ui": "^0.6.1",

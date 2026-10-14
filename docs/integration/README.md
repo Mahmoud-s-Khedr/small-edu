@@ -7,7 +7,6 @@ you are implementing.
 | Guide | Covers |
 | --- | --- |
 | [authentication-and-users.md](authentication-and-users.md) | Firebase sign-in, local session provisioning, current user, and super-admin user roles |
-| [device-registration-update.md](device-registration-update.md) | Device header update, registration, logout, error handling, admin resets, and rollout verification |
 | [modules-and-lectures.md](modules-and-lectures.md) | Module and lecture catalogues, video access, materials, and direct material uploads |
 | [bookings.md](bookings.md) | Payment-receipt direct uploads, booking requests, and admin decisions |
 | [payment-methods.md](payment-methods.md) | Manual-transfer instructions and admin CRUD |
@@ -31,12 +30,10 @@ Paths in these guides are relative to the selected base URL. All IDs named
 
 ## Authentication and response envelopes
 
-Except for health and API documentation, every request must use a current
-Firebase ID token and a persistent installation UUID v4:
+Except for `GET /health`, every request must use a current Firebase ID token:
 
 ```http
 Authorization: Bearer <Firebase ID token>
-X-Device-ID: <persistent installation UUID v4>
 ```
 
 The client must call `POST /auth/session` after Firebase sign-in and before
@@ -78,10 +75,7 @@ type ApiError = {
       | 'CONFLICT'
       | 'VALIDATION_ERROR'
       | 'INTERNAL_ERROR'
-      | 'SERVICE_UNAVAILABLE'
-      | 'DEVICE_NOT_REGISTERED'
-      | 'DEVICE_MISMATCH'
-      | 'REAUTHENTICATION_REQUIRED';
+      | 'SERVICE_UNAVAILABLE';
     message: string;
     details?: unknown; // Present on validation failures.
   };
@@ -91,6 +85,5 @@ type ApiError = {
 `401` means the token is missing, invalid, expired, unverified, or has not yet
 been provisioned through `/auth/session`. `403` means the signed-in local user
 lacks the required role or module-video entitlement. A `422 VALIDATION_ERROR`
-means request data or the device header did not match the documented contract.
-See [device registration and error handling](authentication-and-users.md#device-registration-logout-and-reset). `503 SERVICE_UNAVAILABLE`
+means request data did not match the documented DTO. `503 SERVICE_UNAVAILABLE`
 is returned when direct R2 signing is not configured.

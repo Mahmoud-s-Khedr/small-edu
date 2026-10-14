@@ -4,7 +4,6 @@ import { db } from '../db/client';
 import { users } from '../db/schema';
 import { profileUpdateInput } from '../lib/validation';
 import { requestAccountDeletion, processAccountDeletion } from '../lib/account-deletion';
-import { deviceId } from '../lib/devices';
 import { unauthorized } from '../lib/errors';
 import { verifyFirebaseIdToken, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
@@ -18,7 +17,7 @@ meRoutes.delete('/', async (c) => {
   if (!value?.startsWith('Bearer ')) throw unauthorized();
   const identity = await verifyFirebaseIdToken(value.slice(7), c.env);
   if (!identity) throw unauthorized('Invalid or expired Firebase ID token');
-  const job = await requestAccountDeletion(c.env, identity, deviceId(c.req.header('X-Device-ID')));
+  const job = await requestAccountDeletion(c.env, identity);
   if (!job.completed_at) c.executionCtx.waitUntil(processAccountDeletion(c.env, identity.subject));
   return c.json({ data: { status: job.completed_at ? 'completed' as const : 'pending' as const } }, 202);
 });

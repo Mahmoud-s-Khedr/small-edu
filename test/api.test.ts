@@ -1,4 +1,3 @@
-import deviceMigration from '../drizzle/0005_device_registration.sql?raw';
 import migration from '../drizzle/0000_initial.sql?raw';
 import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
@@ -8,11 +7,8 @@ import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion }
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
-import { releaseDevice } from '../src/lib/devices';
 import { verifyFirebaseIdToken } from '../src/middleware/auth';
 
-const testDevice = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
-const otherDevice = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const userId = '11111111-1111-4111-8111-111111111111';
 const secondUserId = '22222222-2222-4222-8222-222222222222';
 const adminId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -34,7 +30,7 @@ let authTokens = new Map<string, string>();
 const auth = (id: string) => {
   const token = authTokens.get(id);
   if (!token) throw new Error(`Missing Firebase test token for user ${id}`);
-  return { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}` };
+  return { Authorization: `Bearer ${token}` };
 };
 const request = (path: string, init: RequestInit = {}) => SELF.fetch(`https://medly.test${path}`, init);
 const json = (path: string, method: string, body: unknown, user = adminId) => request(path, {
@@ -122,8 +118,6 @@ beforeAll(async () => {
   expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
   await env.DB.batch(uploadsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(paymentMethodsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
-  await env.DB.batch(deviceMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
-  expect(await env.DB.prepare('SELECT device, device_released_at FROM users LIMIT 1').first()).toEqual({ device: null, device_released_at: null });
 });
 
 afterAll(() => vi.unstubAllGlobals());
@@ -136,7 +130,6 @@ beforeEach(async () => {
     'payment_methods', 'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'uploads', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
   await seed();
-  await env.DB.prepare('UPDATE users SET device = ?').bind(testDevice).run();
   authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
     id,
     await firebaseToken({ email: `${subject}@example.test` }, {}, { subject }),
@@ -247,7 +240,7 @@ describe('Medly API', () => {
   it('rejects anonymous and stale account deletion without changing the account', async () => {
     expect((await request('/api/v1/me', { method: 'DELETE' })).status).toBe(401);
     const stale = await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 301 }, {}, { subject: 'seed-student' });
-    const response = await request('/api/v1/me', { method: 'DELETE', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${stale}` } });
+    const response = await request('/api/v1/me', { method: 'DELETE', headers: { Authorization: `Bearer ${stale}` } });
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({ error: { code: 'REAUTHENTICATION_REQUIRED' } });
     expect(await env.DB.prepare('SELECT * FROM account_deletion_jobs').all()).toMatchObject({ results: [] });
@@ -323,13 +316,13 @@ describe('Medly API', () => {
     expect(await env.DB.prepare('SELECT * FROM module_access').all()).toMatchObject({ results: [] });
     expect(await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first()).not.toBeNull();
     const freshToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'new-firebase-uid' });
-    const fresh = await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${freshToken}` } });
+    const fresh = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${freshToken}` } });
     expect(fresh.status).toBe(200);
     const payload = await fresh.json() as { data: { created: boolean; user: { id: string; role: string } } };
     expect(payload.data.created).toBe(true);
     expect(payload.data.user.id).not.toBe(userId);
     expect(payload.data.user.role).toBe('USER');
-    expect(await (await request('/api/v1/bookings', { headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${freshToken}` } })).json()).toEqual({ data: [] });
+    expect(await (await request('/api/v1/bookings', { headers: { Authorization: `Bearer ${freshToken}` } })).json()).toEqual({ data: [] });
     expect(await env.DB.prepare('SELECT user_id FROM booking_requests WHERE id = ?').bind(bookingId).first()).toEqual({ user_id: null });
   });
 
@@ -343,7 +336,7 @@ describe('Medly API', () => {
 
   it('does not mark accounts when Firebase deletion credentials are missing', async () => {
     await expect(requestAccountDeletion({ ...env, FIREBASE_PRIVATE_KEY: undefined },
-      { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) }, testDevice))
+      { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) }))
       .rejects.toMatchObject({ status: 503 });
     expect(await env.DB.prepare('SELECT deletion_requested_at FROM users WHERE id = ?').bind(userId).first())
       .toEqual({ deletion_requested_at: null });
@@ -351,7 +344,7 @@ describe('Medly API', () => {
 
   it('retries a failed D1 cleanup without repeating successful Firebase deletion', async () => {
     const identity = { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) };
-    await requestAccountDeletion(env, identity, testDevice);
+    await requestAccountDeletion(env, identity);
     deletionMode = 'success';
     await env.DB.prepare("CREATE TRIGGER prevent_account_delete BEFORE DELETE ON users BEGIN SELECT RAISE(FAIL, 'test storage failure'); END").run();
     try {
@@ -370,7 +363,7 @@ describe('Medly API', () => {
 
   it('leases concurrent jobs, sanitizes OAuth errors, and removes only expired completed tombstones', async () => {
     const identity = { subject: 'seed-student', email: 'student@example.test', emailVerified: true, authTime: Math.floor(Date.now() / 1000) };
-    await Promise.all([requestAccountDeletion(env, identity, testDevice), requestAccountDeletion(env, identity, testDevice)]);
+    await Promise.all([requestAccountDeletion(env, identity), requestAccountDeletion(env, identity)]);
     deletionMode = 'oauth-fail';
     await Promise.all([processAccountDeletion(env, identity.subject), processAccountDeletion(env, identity.subject)]);
     expect(oauthAssertions).toHaveLength(1);
@@ -886,8 +879,8 @@ describe('Medly API', () => {
 
   it('provisions Firebase sessions, links legacy users, and makes repeat login idempotent', async () => {
     const token = await firebaseToken();
-    expect((await request('/api/v1/modules', { headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}` } })).status).toBe(401);
-    const created = await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}` } });
+    expect((await request('/api/v1/modules', { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
+    const created = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     expect(created.status).toBe(200);
     const createdPayload = await created.json() as { data: { user: { id: string; role: string; name: string }; created: boolean; email_verified: boolean } };
     expect(createdPayload.data.created).toBe(true);
@@ -895,45 +888,45 @@ describe('Medly API', () => {
     expect(createdPayload.data.user.role).toBe('USER');
     expect(createdPayload.data.user.name).toBe('Firebase Student');
 
-    const repeated = await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}` } });
+    const repeated = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     expect(await repeated.json()).toMatchObject({ data: { created: false, email_verified: true, user: { id: createdPayload.data.user.id } } });
 
     const fallbackToken = await firebaseToken({ email: 'fallback-name@example.test', name: '' }, {}, { subject: 'fallback-name-user' });
-    const fallback = await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${fallbackToken}` } });
+    const fallback = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${fallbackToken}` } });
     expect(await fallback.json()).toMatchObject({ data: { created: true, user: { name: 'fallback-name' } } });
 
     const suppliedNameToken = await firebaseToken({ email: 'supplied-name@example.test' }, {}, { subject: 'supplied-name-user' });
     const suppliedName = await request('/api/v1/auth/session', {
       method: 'POST',
-      headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: '  Ada Lovelace  ' }),
     });
     expect(await suppliedName.json()).toMatchObject({ data: { created: true, user: { name: 'Ada Lovelace' } } });
 
     const repeatWithNewName = await request('/api/v1/auth/session', {
       method: 'POST',
-      headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Someone Else' }),
     });
     expect(await repeatWithNewName.json()).toMatchObject({ data: { created: false, user: { name: 'Ada Lovelace' } } });
 
     const invalidName = await request('/api/v1/auth/session', {
       method: 'POST',
-      headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${suppliedNameToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: '   ' }),
     });
     expect(invalidName.status).toBe(422);
 
     await env.DB.prepare('UPDATE users SET external_subject = NULL WHERE id = ?').bind(userId).run();
     const legacyToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'legacy-firebase-user' });
-    const legacy = await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${legacyToken}` } });
+    const legacy = await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${legacyToken}` } });
     expect(await legacy.json()).toMatchObject({ data: { created: false, user: { id: userId, role: 'USER', name: 'Student' } } });
     expect((await env.DB.prepare('SELECT external_subject AS subject FROM users WHERE id = ?').bind(userId).first<{ subject: string }>())?.subject).toBe('legacy-firebase-user');
   });
 
   it('reports a valid but unverified Firebase email without provisioning an account', async () => {
     const response = await request('/api/v1/auth/session', {
-      method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${await firebaseToken({ email_verified: false })}` },
+      method: 'POST', headers: { Authorization: `Bearer ${await firebaseToken({ email_verified: false })}` },
     });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: {
@@ -949,147 +942,20 @@ describe('Medly API', () => {
     await env.DB.prepare('INSERT INTO users (id, external_subject, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind('99999999-9999-4999-8999-999999999999', 'another-firebase-user', 'firebase.student@example.test', 'Linked', 'USER', now, now).run();
     const collision = await request('/api/v1/auth/session', {
-      method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${await firebaseToken()}` },
+      method: 'POST', headers: { Authorization: `Bearer ${await firebaseToken()}` },
     });
     expect(collision.status).toBe(409);
 
     const token = await firebaseToken({ email: 'promote@example.test' });
-    await request('/api/v1/auth/session', { method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}` } });
+    await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     const payload = { title: 'Firebase role test', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 0 };
     expect((await request('/api/v1/modules', {
-      method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })).status).toBe(403);
     await env.DB.prepare('UPDATE users SET role = ? WHERE external_subject = ?').bind('ADMIN', 'firebase-user-1').run();
     expect((await request('/api/v1/modules', {
-      method: 'POST', headers: { 'X-Device-ID': testDevice, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })).status).toBe(201);
   });
 
-});
-
-describe('one-device registration', () => {
-  const call = (path: string, method = 'GET', actor = userId, device = testDevice) => request(`/api/v1${path}`, {
-    method, headers: { ...auth(actor), 'X-Device-ID': device },
-  });
-  const errorCode = async (response: Response, status: number, code: string) => {
-    expect(response.status).toBe(status);
-    const text = await response.text();
-    expect(JSON.parse(text)).toMatchObject({ error: { code } });
-    expect(text).not.toContain(testDevice);
-    expect(text).not.toContain(otherDevice);
-  };
-
-  it.each([userId, adminId, superAdminId])('enforces device registration for role account %s', async (actor) => {
-    await errorCode(await call('/me', 'GET', actor, otherDevice), 401, 'DEVICE_MISMATCH');
-    await errorCode(await call('/auth/session', 'POST', actor, otherDevice), 401, 'DEVICE_MISMATCH');
-    await env.DB.prepare('UPDATE users SET device = NULL WHERE id = ?').bind(actor).run();
-    await errorCode(await call('/me', 'GET', actor), 401, 'DEVICE_NOT_REGISTERED');
-    expect((await call('/auth/session', 'POST', actor, testDevice.toUpperCase())).status).toBe(200);
-    expect((await call('/auth/session', 'POST', actor)).status).toBe(200);
-    expect((await call('/me', 'GET', actor)).status).toBe(200);
-  });
-
-  it('validates headers on session, ordinary requests, logout, and deletion without echoing input', async () => {
-    for (const [path, method] of [['/auth/session', 'POST'], ['/me', 'GET'], ['/auth/logout', 'POST'], ['/me', 'DELETE']]) {
-      for (const value of [undefined, '', 'not-a-uuid', '11111111-1111-1111-8111-111111111111']) {
-        const headers: Record<string, string> = { Authorization: auth(userId).Authorization };
-        if (value !== undefined) headers['X-Device-ID'] = value;
-        await errorCode(await request(`/api/v1${path}`, { method, headers }), 422, 'VALIDATION_ERROR');
-      }
-    }
-  });
-
-  it('allows exactly one UUID in simultaneous first account claims', async () => {
-    const token = await firebaseToken({}, {}, { subject: 'concurrent-device-user' });
-    const results = await Promise.all([testDevice, otherDevice].map((device) => request('/api/v1/auth/session', {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Device-ID': device },
-    })));
-    expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
-    const winner = results[0]!.status === 200 ? testDevice : otherDevice;
-    expect(await env.DB.prepare('SELECT device FROM users WHERE external_subject = ?').bind('concurrent-device-user').first()).toEqual({ device: winner });
-    for (const response of results) expect(await response.text()).not.toContain(winner);
-  });
-
-  it('releases logout and requires later auth_time, including after token refresh', async () => {
-    expect((await call('/auth/logout', 'POST')).status).toBe(204);
-    await errorCode(await call('/auth/session', 'POST'), 401, 'REAUTHENTICATION_REQUIRED');
-    const refreshed = await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 10 }, {}, { subject: 'seed-student' });
-    await errorCode(await request('/api/v1/auth/session', { method: 'POST', headers: { ...auth(userId), Authorization: `Bearer ${refreshed}` } }), 401, 'REAUTHENTICATION_REQUIRED');
-    // Move the release into the past so a later interactive sign-in is testable without sleeping.
-    await env.DB.prepare('UPDATE users SET device_released_at = ? WHERE id = ?').bind(Date.now() - 3600_000, userId).run();
-    authTokens.set(userId, await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 1800 }, {}, { subject: 'seed-student' }));
-    expect((await call('/auth/session', 'POST', userId, otherDevice)).status).toBe(200);
-    await errorCode(await call('/auth/logout', 'POST'), 401, 'DEVICE_MISMATCH');
-    expect((await call('/me', 'GET', userId, otherDevice)).status).toBe(200);
-  });
-
-  it('does not clear a new device when an already authenticated logout is delayed', async () => {
-    // A's request has passed middleware, but its release mutation is delayed.
-    expect((await call('/me')).status).toBe(200);
-    expect((await call(`/admin/users/${userId}/reset-device`, 'POST', adminId)).status).toBe(204);
-    await env.DB.prepare('UPDATE users SET device_released_at = ? WHERE id = ?').bind(Date.now() - 10_000, userId).run();
-    expect((await call('/auth/session', 'POST', userId, otherDevice)).status).toBe(200);
-    await releaseDevice(env, userId, testDevice);
-    expect((await call('/me', 'GET', userId, otherDevice)).status).toBe(200);
-  });
-
-  it('accepts a refreshed token on the registered UUID without changing registration', async () => {
-    authTokens.set(userId, await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 3600 }, {}, { subject: 'seed-student' }));
-    expect((await call('/me')).status).toBe(200);
-    expect((await call('/auth/session', 'POST')).status).toBe(200);
-    expect(await env.DB.prepare('SELECT device FROM users WHERE id = ?').bind(userId).first()).toEqual({ device: testDevice });
-  });
-
-  it('enforces reset permissions and resets unregistered accounts and self', async () => {
-    await errorCode(await call(`/admin/users/${secondUserId}/reset-device`, 'POST', userId), 403, 'FORBIDDEN');
-    for (const target of [adminId, superAdminId]) await errorCode(await call(`/admin/users/${target}/reset-device`, 'POST', adminId), 403, 'FORBIDDEN');
-    expect((await call(`/admin/users/${userId}/reset-device`, 'POST', adminId)).status).toBe(204);
-    expect((await call(`/admin/users/${userId}/reset-device`, 'POST', adminId)).status).toBe(204);
-    await errorCode(await call('/auth/session', 'POST'), 401, 'REAUTHENTICATION_REQUIRED');
-    expect((await call(`/admin/users/${adminId}/reset-device`, 'POST', superAdminId)).status).toBe(204);
-    expect((await call(`/admin/users/${superAdminId}/reset-device`, 'POST', superAdminId)).status).toBe(204);
-    await errorCode(await call('/me', 'GET', superAdminId), 401, 'DEVICE_NOT_REGISTERED');
-  });
-
-  it('returns missing and deleting reset errors and protects deletion retries by device hash', async () => {
-    await errorCode(await call(`/admin/users/${crypto.randomUUID()}/reset-device`, 'POST', adminId), 404, 'NOT_FOUND');
-    await errorCode(await call('/me', 'DELETE', userId, otherDevice), 401, 'DEVICE_MISMATCH');
-    expect((await call('/me', 'DELETE')).status).toBe(202);
-    await errorCode(await call(`/admin/users/${userId}/reset-device`, 'POST', adminId), 409, 'CONFLICT');
-    await errorCode(await call('/me', 'DELETE', userId, otherDevice), 401, 'DEVICE_MISMATCH');
-    const job = await env.DB.prepare('SELECT device_hash FROM account_deletion_jobs WHERE firebase_uid = ?').bind('seed-student').first<{ device_hash: string }>();
-    expect(job?.device_hash).toMatch(/^[a-f0-9]{64}$/);
-    await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
-    expect((await call('/me', 'DELETE')).status).toBe(202);
-    await errorCode(await call('/me', 'DELETE', userId, otherDevice), 401, 'DEVICE_MISMATCH');
-  });
-
-  it('serializes reset and registration so pre-release sign-in cannot regain access', async () => {
-    await env.DB.prepare('UPDATE users SET device = NULL WHERE id = ?').bind(userId).run();
-    const [session, reset] = await Promise.all([
-      call('/auth/session', 'POST'), call(`/admin/users/${userId}/reset-device`, 'POST', adminId),
-    ]);
-    expect(reset.status).toBe(204);
-    expect([200, 401]).toContain(session.status);
-    expect(await env.DB.prepare('SELECT device FROM users WHERE id = ?').bind(userId).first()).toEqual({ device: null });
-    await errorCode(await call('/auth/session', 'POST'), 401, 'REAUTHENTICATION_REQUIRED');
-  });
-
-  it('never discloses device fields in profile, session, list, or role responses', async () => {
-    const responses = [await call('/me'), await call('/auth/session', 'POST'), await call('/admin/users', 'GET', superAdminId),
-      await json(`/api/v1/admin/users/${userId}/role`, 'PATCH', { role: 'ADMIN' }, superAdminId)];
-    for (const response of responses) {
-      expect(response.status).toBe(200);
-      const text = await response.text();
-      expect(text).not.toContain(testDevice);
-      expect(text).not.toContain('device');
-    }
-  });
-
-  it('allows browser CORS preflight with the device header', async () => {
-    const response = await request('/api/v1/me', { method: 'OPTIONS', headers: { Origin: 'https://client.test',
-      'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization,x-device-id' } });
-    expect(response.status).toBe(204);
-    expect(response.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toContain('x-device-id');
-  });
 });

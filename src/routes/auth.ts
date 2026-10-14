@@ -2,10 +2,9 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { db } from '../db/client';
 import { users } from '../db/schema';
-import { deviceId, registerDevice, releaseDevice } from '../lib/devices';
 import { conflict, unauthorized } from '../lib/errors';
 import { authSessionInput } from '../lib/validation';
-import { requireAuth, verifyFirebaseIdToken } from '../middleware/auth';
+import { verifyFirebaseIdToken } from '../middleware/auth';
 import type { AppBindings, AuthUser } from '../types';
 
 const asAuthUser = (user: Pick<typeof users.$inferSelect, 'id' | 'email' | 'name' | 'role'>): AuthUser => ({
@@ -33,11 +32,6 @@ authRoutes.post('/session', async (c) => {
       email_verified: false,
     } }, 401);
   }
-  const presented = deviceId(c.req.header('X-Device-ID'));
-  const session = async (user: Parameters<typeof asAuthUser>[0], created = false) => {
-    await registerDevice(c.env, user.id, presented, identity.authTime);
-    return c.json({ data: { user: asAuthUser(user), created, email_verified: true } });
-  };
   const { name } = c.req.header('Content-Type')?.includes('application/json')
     ? authSessionInput.parse(await c.req.json())
     : {};
@@ -51,7 +45,7 @@ authRoutes.post('/session', async (c) => {
   await rejectDeleting();
   const linked = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
   if (linked?.deletionRequestedAt) throw conflict('This account is being deleted');
-  if (linked) return session(linked);
+  if (linked) return c.json({ data: { user: asAuthUser(linked), created: false, email_verified: true } });
 
   const emailMatch = await database.query.users.findFirst({ where: eq(users.email, identity.email) });
   if (emailMatch) {
@@ -72,15 +66,15 @@ authRoutes.post('/session', async (c) => {
       await rejectDeleting();
       const raced = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
       if (raced?.deletionRequestedAt) throw conflict('This account is being deleted');
-      if (raced) return session(raced);
+      if (raced) return c.json({ data: { user: asAuthUser(raced), created: false, email_verified: true } });
       throw error;
     }
-    if (linkedLegacy[0]) return session(linkedLegacy[0]);
+    if (linkedLegacy[0]) return c.json({ data: { user: asAuthUser(linkedLegacy[0]), created: false, email_verified: true } });
 
     await rejectDeleting();
     const raced = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
     if (raced?.deletionRequestedAt) throw conflict('This account is being deleted');
-    if (raced) return session(raced);
+    if (raced) return c.json({ data: { user: asAuthUser(raced), created: false, email_verified: true } });
     throw conflict('This email address is already linked to a different Firebase account');
   }
 
@@ -101,22 +95,16 @@ authRoutes.post('/session', async (c) => {
       .bind(created.id, created.externalSubject, created.email, created.name, created.role,
         now.getTime(), now.getTime(), identity.subject).run();
     if (!inserted.meta.changes) throw conflict('This account is being deleted or has been deleted');
-    return await session(created, true);
+    return c.json({ data: { user: asAuthUser(created), created: true, email_verified: true } });
   } catch (error) {
     // Unique constraints make concurrent first-login calls safe. Re-read the
     // resulting local account; a different subject for this email is a conflict.
     await rejectDeleting();
     const existing = await database.query.users.findFirst({ where: eq(users.externalSubject, identity.subject) });
     if (existing?.deletionRequestedAt) throw conflict('This account is being deleted');
-    if (existing) return session(existing);
+    if (existing) return c.json({ data: { user: asAuthUser(existing), created: false, email_verified: true } });
     const collidingEmail = await database.query.users.findFirst({ where: eq(users.email, identity.email) });
     if (collidingEmail) throw conflict('This email address is already linked to a different Firebase account');
     throw error;
   }
-});
-
-authRoutes.post('/logout', requireAuth, async (c) => {
-  const presented = deviceId(c.req.header('X-Device-ID'));
-  await releaseDevice(c.env, c.get('user').id, presented);
-  return c.body(null, 204);
 });
