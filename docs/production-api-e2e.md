@@ -61,12 +61,3 @@ payment receipts and decisions, flashcards and images, MCQs, binary downloads,
 authorization failures, validation-sensitive flows, pagination/filtering, and
 cascade deletion. It uses recognizable `Medly E2E <run-id>` names, so any
 residual test data can be identified safely.
-
-## Persistent device registrations
-
-The prepare command saves one UUID v4 per actor in `state.private.json`. Run
-reuses those UUIDs and adds missing UUIDs to older state files before signing in.
-Keep this state for repeated runs against the same accounts. Changing the UUID
-requires backend logout or authorized reset followed by a later Firebase sign-in.
-All protected E2E requests include `X-Device-ID`; tokens and device UUIDs are not
-written to request logs. Run after the additive migration and enforcement rollout.

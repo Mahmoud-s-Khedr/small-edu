@@ -20,7 +20,7 @@ import type { AppBindings } from './types';
 const app = new OpenAPIHono<AppBindings>();
 app.use('*', async (c, next) => {
   const origins = c.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [];
-  return cors({ origin: (origin) => origins.includes('*') || origins.includes(origin) ? origin : '', allowHeaders: ['Authorization', 'Content-Type', 'X-Device-ID'], credentials: true })(c, next);
+  return cors({ origin: (origin) => origins.includes('*') || origins.includes(origin) ? origin : '', credentials: true })(c, next);
 });
 app.onError(errorHandler);
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -28,9 +28,6 @@ app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not fou
 const api = new OpenAPIHono<AppBindings>();
 api.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
   type: 'http', scheme: 'bearer', bearerFormat: 'Firebase ID token',
-});
-api.openAPIRegistry.registerComponent('securitySchemes', 'deviceId', {
-  type: 'apiKey', in: 'header', name: 'X-Device-ID', description: 'Persistent installation UUID v4'
 });
 api.doc31('/openapi', {
   openapi: '3.1.0',

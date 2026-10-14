@@ -40,18 +40,18 @@ The client must follow this sequence after every interactive sign-in:
    do not call the Medly API until `user.emailVerified` is true. Refresh or reload
    the Firebase user before checking that value.
 3. Call `getIdToken()` and send `POST /api/v1/auth/session` with
-   `Authorization: Bearer <token>` and a persistent installation UUID v4 in
-   `X-Device-ID`. An email/password registration can include
+   `Authorization: Bearer <token>`. An email/password registration can include
    `{ "name": "Display name" }` in this first provisioning request; it is used
    only when creating the local account. This is provisioning, not a cookie session.
 4. Retain no application auth token of its own. For every API request, get a
-   current Firebase ID token (Firebase refreshes it) and send it as a Bearer token, together with the same `X-Device-ID`.
-5. Handle device errors as described in the [client integration guide](integration/authentication-and-users.md#device-registration-logout-and-reset).
-   `DEVICE_MISMATCH` signs out Firebase without retrying registration.
-   `DEVICE_NOT_REGISTERED` calls `/auth/session`; `REAUTHENTICATION_REQUIRED`
-   prompts for a new sign-in, since token refresh cannot reset `auth_time`.
-   On `409` from `/auth/session`, show account-support guidance.
-
+   current Firebase ID token (Firebase refreshes it) and send it as a Bearer token.
+5. On `401 REAUTHENTICATION_REQUIRED` from account deletion, reauthenticate with
+   Firebase; refreshing the token alone does not reset the sign-in time. For
+   other `401` responses, refresh the Firebase ID token once and retry once.
+   If that fails,
+   sign the person out and return to the sign-in screen. On `409` from
+   `/auth/session`, show account-support guidance; do not create a second local
+   profile.
 
 The first local provisioning gives the user D1 role `USER`. Firebase custom
 claims must never grant a local role. A deployment-time seeder creates the
@@ -96,9 +96,8 @@ Use the Firebase SDK for the selected client platform. The UI needs these paths:
 - **Delete account:** confirm deletion, reauthenticate if required, call
   `DELETE /me`, then sign out and clear local data after `202`. Preserve payment
   records on the server; see [account deletion](account-deletion.md).
-- **Sign out:** call `POST /auth/logout` before Firebase sign-out and retain the
-  installation UUID. If backend logout fails, explain that an administrator
-  reset may be needed. Clear local cached application data as appropriate.
+- **Sign out:** call Firebase sign-out and clear only local cached application
+  data that should not be visible to the next device user.
 - **Manage sign-in methods:** show the methods from Firebase `providerData` and
   let an authenticated user add another method. Require recent authentication
   before sensitive actions such as changing a password or unlinking a provider.
@@ -196,41 +195,3 @@ Apple sign-in requires active Apple Developer Program membership.
 - [Firebase: email/password authentication](https://firebase.google.com/docs/auth)
 - [Firebase: link multiple providers](https://firebase.google.com/docs/auth/web/account-linking)
 - [Firebase: Apple authentication for web](https://firebase.google.com/docs/auth/web/apple)
-
-## Coordinated device enforcement rollout
-
-1. Apply additive migration `0005_device_registration.sql` first. Existing users
-   begin unregistered; existing deletion jobs retain their background retries.
-   Pre-rollout deletion jobs have no accepted device hash, so API acknowledgement
-   retries for those jobs are denied rather than binding them to an arbitrary device.
-2. Prepare clients that persist UUID v4 and send `X-Device-ID` on every protected
-   request, call `/auth/session` after sign-in, and release via backend logout.
-3. Deploy enforcement together with compatible clients. Older clients without
-   the header lose protected access (`422`). Existing users register through
-   `/auth/session`. The stored UUID is never exposed in API responses or logs.
-4. Verify two browser profiles: A registers, B receives `DEVICE_MISMATCH`; A
-   logs out; B performs a later sign-in and registers. Repeat using admin reset,
-   then confirm that refreshing an old token cannot re-register.
-
-Release requires Firebase `auth_time` strictly after release; there is no fixed
-freshness window for registration. A sign-in in the same second as release may
-need another interactive sign-in because Firebase has second precision.
-Copying the UUID can bypass this installation/profile restriction; downloaded
-content and external video playback remain outside it.
-
-## Locked-out super-admin recovery
-
-From an authorized deployment environment, use the account's local UUID:
-
-```bash
-npm run recover:superadmin -- --user-id <local-user-UUID> --remote
-# Use --local instead for development.
-```
-
-The command only clears a non-deleting `SUPER_ADMIN` account. Check the returned
-ID to confirm an account was changed. It records the release timestamp and emits
-a structured recovery record containing the user ID, target, time, and exit code,
-without credentials or the stored device UUID. Retain deployment command logs
-and record the operator/reason. The owner must then sign in again after release
-and call `/auth/session`. API administrator resets likewise emit structured
-actor/target records to Worker logs.

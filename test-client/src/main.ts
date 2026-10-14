@@ -94,7 +94,6 @@ const presets: Preset[] = [
   { group: 'Payment methods', label: 'Edit payment method', method: 'PATCH', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()], body: [{ name: 'key', label: 'Key' }, { name: 'value', label: 'Value' }, { name: 'description', label: 'Description', type: 'textarea' }] },
   { group: 'Payment methods', label: 'Delete payment method', method: 'DELETE', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()] },
   { group: 'System and identity', label: 'Health check', method: 'GET', path: '/health' },
-  { group: 'System and identity', label: 'Reset account device', method: 'POST', path: '/admin/users/:userId/reset-device', params: [userId()] },
   { group: 'System and identity', label: 'Provision Firebase session', method: 'POST', path: '/auth/session' },
   { group: 'System and identity', label: 'Current user', method: 'GET', path: '/me', saveIdAs: 'userId' },
   { group: 'Super-admin users', label: 'List users', method: 'GET', path: '/admin/users', saveIdAs: 'userId' },
@@ -289,32 +288,6 @@ function rememberResponse(preset: Preset, payload: unknown): void {
   updateSuggestions();
 }
 
-const deviceStorageKey = 'medly-device-id';
-const deviceUuid = localStorage.getItem(deviceStorageKey) ?? crypto.randomUUID();
-localStorage.setItem(deviceStorageKey, deviceUuid);
-const deviceRecoveryMessages: Record<string, string> = {
-  DEVICE_MISMATCH: 'Another device is registered. Sign out on that device or ask an administrator to reset it.',
-  REAUTHENTICATION_REQUIRED: 'Sign in again with your credentials, then provision the session. Refreshing the token is insufficient.',
-};
-
-async function protectedFetch(base: string, path: string, init: RequestInit, retry = true): Promise<Response> {
-  const headers = new Headers(init.headers);
-  headers.set('Authorization', `Bearer ${await token()}`);
-  headers.set('X-Device-ID', deviceUuid);
-  const response = await fetch(`${base}${path}`, { ...init, headers });
-  if (response.status !== 401) return response;
-  const payload = await response.clone().json().catch(() => null);
-  const code = payload?.error?.code;
-  if (code === 'DEVICE_MISMATCH') {
-    await signOut(auth);
-  } else if (code === 'DEVICE_NOT_REGISTERED' && retry && path !== '/auth/session' && path !== '/auth/logout') {
-    const session = await protectedFetch(base, '/auth/session', { method: 'POST' }, false);
-    if (session.ok) return protectedFetch(base, path, init, false);
-    return session;
-  }
-  return response;
-}
-
 async function sendApiRequest(method: string, path: string, body?: BodyInit, _file?: File, preset?: Preset): Promise<unknown> {
   const started = performance.now();
   let entry: LogItem | undefined;
@@ -322,19 +295,16 @@ async function sendApiRequest(method: string, path: string, body?: BodyInit, _fi
     const base = apiBase();
     entry = addLog(`${method} ${path}`, `Sending request to ${base}${path}`, 'pending');
     const headers = new Headers();
-
+    if (path !== '/health') headers.set('Authorization', `Bearer ${await token()}`);
     if (body) {
       headers.set('Content-Type', 'application/json');
     }
-    const response = path === '/health'
-      ? await fetch(`${base}${path}`, { method, headers, body })
-      : await protectedFetch(base, path, { method, headers, body });
+    const response = await fetch(`${base}${path}`, { method, headers, body });
     const elapsed = Math.round(performance.now() - started);
     const contentType = response.headers.get('Content-Type') ?? '';
     if (contentType.includes('application/json')) {
       const payload = await response.json().catch(() => null);
-      const message = response.status === 401 ? deviceRecoveryMessages[payload?.error?.code] : undefined;
-      show({ status: response.status, statusText: response.statusText, body: payload, ...(message ? { message } : {}) });
+      show({ status: response.status, statusText: response.statusText, body: payload });
       if (response.ok) rememberResponse(preset ?? { group: '', label: '', method, path }, payload);
       updateLog(entry, response.ok ? 'success' : 'error', `${response.status} ${response.statusText || 'Response'} · ${elapsed} ms`);
       return payload;
@@ -591,10 +561,8 @@ document.querySelector<HTMLButtonElement>('#refresh-verification')!.addEventList
   show({ email: auth.currentUser.email, emailVerified: auth.currentUser.emailVerified });
 }));
 document.querySelector<HTMLButtonElement>('#sign-out')!.addEventListener('click', () => void runIdentity('Firebase sign-out', async () => {
-  let released = false;
-  try { released = (await protectedFetch(apiBase(), '/auth/logout', { method: 'POST' }, false)).ok; } catch { /* Report the unreleased registration below. */ }
   await signOut(auth);
-  show(released ? 'Signed out and device registration released.' : 'Signed out of Firebase. Device registration may still require an administrator reset.');
+  show('Signed out.');
 }));
 document.querySelector<HTMLButtonElement>('#provision-session')!.addEventListener('click', () => void sendApiRequest('POST', '/auth/session'));
 document.querySelector<HTMLButtonElement>('#get-me')!.addEventListener('click', () => void sendApiRequest('GET', '/me', undefined, undefined, { group: '', label: '', method: 'GET', path: '/me', saveIdAs: 'userId' }));

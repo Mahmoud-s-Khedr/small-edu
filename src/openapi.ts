@@ -10,7 +10,7 @@ import {
 
 const uuid = z.string().uuid().openapi({ example: '11111111-1111-4111-8111-111111111111' });
 const dateTime = z.string().datetime().openapi({ example: '2026-09-28T12:00:00.000Z' });
-const auth = [{ bearerAuth: [], deviceId: [] }];
+const auth = [{ bearerAuth: [] }];
 
 const user = z.object({ id: uuid, email: z.string().email(), name: z.string(), role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']) }).openapi('User');
 const paymentMethod = paymentMethodInput.extend({ id: uuid, createdAt: dateTime, updatedAt: dateTime }).openapi('PaymentMethod');
@@ -54,15 +54,6 @@ const key = (method: string, path: string) => {
   return `${method.toLowerCase()}:${normalized}`;
 };
 const add = (route: Record<string, unknown>) => {
-  if (route.security) {
-    route.responses = { ...(route.responses as object),
-      422: { description: 'Missing or malformed X-Device-ID, or invalid input', content: { 'application/json': { schema: error } } },
-      401: { description: 'Invalid token, DEVICE_NOT_REGISTERED, DEVICE_MISMATCH, or REAUTHENTICATION_REQUIRED', content: { 'application/json': { schema: error } } },
-      403: { description: 'Insufficient role permissions', content: { 'application/json': { schema: error } } },
-      404: { description: 'Resource not found', content: { 'application/json': { schema: error } } },
-      409: { description: 'Account deletion or resource conflict', content: { 'application/json': { schema: error } } },
-    };
-  }
   const definition = operation(route);
   definitions.set(key(route.method as string, route.path as string), definition);
   return definition;
@@ -102,8 +93,6 @@ export class ApiRouter<E extends Env = Env> extends OpenAPIHono<E> {
 
 add({ method: 'get', path: '/health', tags: ['System'], summary: 'Health check', responses: { 200: { description: 'Worker is healthy', content: { 'application/json': { schema: envelope(z.object({ status: z.literal('ok') })) } } } } });
 secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean(), email_verified: z.literal(true) })), { body: { required: false, content: { 'application/json': { schema: authSessionInput.openapi('SessionInput') } } } });
-noContent('post', '/auth/logout', ['Authentication'], 'Release the matching device before Firebase sign-out');
-noContent('post', '/admin/users/{userId}/reset-device', ['Admin'], 'Reset USER devices as admin; any role as super admin', { params: z.object({ userId: uuid }) });
 secured('get', '/me', ['Authentication'], 'Get the current local user', envelope(user));
 secured('patch', '/me', ['Authentication'], 'Update the current user’s display name', envelope(user), { body: { content: { 'application/json': { schema: profileUpdateInput.openapi('ProfileUpdateInput') } } } });
 
