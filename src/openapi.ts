@@ -23,7 +23,11 @@ const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, createdAt: da
 const lectureReadDto = lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto });
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime, downloadUrl: z.string().url() }).openapi('Material');
 const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
-const adminBooking = booking.extend({ receiptDownloadUrl: z.string().url() }).openapi('AdminBooking');
+const adminBooking = booking.extend({
+  receiptDownloadUrl: z.string().url(),
+  user: user.nullable(),
+  module: moduleDto,
+}).openapi('AdminBooking');
 const flashcard = z.object({ id: uuid, lectureId: uuid, frontText: z.string().nullable(), backText: z.string().nullable(), frontImageUrl: z.string().nullable(), backImageUrl: z.string().nullable(), ordering: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Flashcard');
 const mcq = z.object({ id: uuid, lectureId: uuid, questionText: z.string(), ordering: z.number().int(), choices: z.array(z.object({ id: uuid, choiceText: z.string(), isCorrect: z.boolean(), ordering: z.number().int() })) }).openapi('Mcq');
 const upload = z.object({ objectKey: z.string(), filename: z.string(), contentType: z.string(), sizeBytes: z.number().int() }).openapi('Upload');

@@ -596,6 +596,44 @@ describe('Medly API', () => {
     expect(await updated.json()).toMatchObject({ data: { title: 'Updated module', access_status: 'full_access' } });
   });
 
+  it.each([adminId, superAdminId])('includes user and module objects in the admin booking queue for %s', async (actor) => {
+    const now = Date.now();
+    const otherModuleId = crypto.randomUUID();
+    const bookingIds = [crypto.randomUUID(), crypto.randomUUID()];
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(moduleId, 'Physiology', '2', '2026', 'Fall', 100, now, now),
+      env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(otherModuleId, 'Anatomy', '3', '2026', 'Fall', 200, now, now),
+      ...[userId, secondUserId].map((owner, index) => env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(bookingIds[index], owner, index === 0 ? moduleId : otherModuleId, `payment-receipts/${owner}/queue.pdf`, 'queue.pdf', 'application/pdf', 1, 'PENDING', now + index, now + index)),
+    ]);
+    const list = async () => {
+      const response = await request('/api/v1/admin/bookings?status=PENDING', { headers: auth(actor) });
+      expect(response.status).toBe(200);
+      return await response.json() as { data: Array<{ id: string; userId: string | null; user: unknown; module: unknown; receiptDownloadUrl: string }> };
+    };
+    const result = await list();
+    expect(result.data.map((row) => row.id)).toEqual([bookingIds[1], bookingIds[0]]);
+    expect(result.data[1]!.user).toEqual({ id: userId, name: 'Student', email: 'student@example.test', role: 'USER' });
+    expect(result.data[0]!.user).toEqual({ id: secondUserId, name: 'Other Student', email: 'other@example.test', role: 'USER' });
+    expect(result.data[1]!.module).toEqual({
+      id: moduleId, title: 'Physiology', number: '2', academicYear: '2026', semester: 'Fall', priceCents: 100,
+      createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(), access_status: 'full_access',
+    });
+    expect(result.data[0]!.module).toMatchObject({ id: otherModuleId, title: 'Anatomy', priceCents: 200 });
+    await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(secondUserId).run();
+    const retained = await list();
+    expect(retained.data).toHaveLength(2);
+    expect(retained.data[0]).toMatchObject({ id: bookingIds[1], userId: null, user: null, module: { id: otherModuleId } });
+    expect(retained.data[0]!.receiptDownloadUrl).toContain('X-Amz-Signature=');
+    expect(retained.data[0]).not.toHaveProperty('receiptKey');
+    const studentList = await request('/api/v1/bookings', { headers: auth(userId) });
+    const studentBody = await studentList.json() as { data: unknown[] };
+    expect(studentBody.data[0]).not.toHaveProperty('user');
+    expect(studentBody.data[0]).not.toHaveProperty('module');
+  });
+
   it('filters both booking lists by status and creation date before admin pagination', async () => {
     const rows = [
       { id: crypto.randomUUID(), user: userId, status: 'REJECTED', date: '2026-09-30T23:59:59.999Z' },

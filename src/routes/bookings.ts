@@ -2,7 +2,7 @@ import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
 import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { bookingRequests, modules } from '../db/schema';
+import { bookingRequests, modules, users } from '../db/schema';
 import { conflict, notFound, unauthorized } from '../lib/errors';
 import { pagination } from '../lib/pagination';
 import { adminBookingFilters, bookingDateBoundary, bookingFilters } from '../lib/booking-filters';
@@ -88,10 +88,23 @@ adminBookingRoutes.use('*', requireAuth, requireAdmin);
 adminBookingRoutes.get('/', async (c) => {
   const query = adminBookingFilters.parse(c.req.query());
   const p = pagination(query);
-  const items = await db(c.env.DB).select().from(bookingRequests)
+  const items = await db(c.env.DB).select({
+    booking: bookingRequests,
+    user: { id: users.id, name: users.name, email: users.email, role: users.role },
+    module: modules,
+  }).from(bookingRequests)
+    .leftJoin(users, eq(bookingRequests.userId, users.id))
+    .innerJoin(modules, eq(bookingRequests.moduleId, modules.id))
     .where(and(...bookingConditions(query)))
     .orderBy(desc(bookingRequests.createdAt)).limit(p.limit).offset(p.offset);
-  return c.json({ data: await Promise.all(items.map((item) => adminBookingResponse(c.env, item))), meta: p });
+  return c.json({
+    data: await Promise.all(items.map(async ({ booking, user, module }) => ({
+      ...await adminBookingResponse(c.env, booking),
+      user,
+      module: { ...module, access_status: 'full_access' as const },
+    }))),
+    meta: p,
+  });
 });
 
 adminBookingRoutes.get('/:bookingId/receipt', async (c) => {

@@ -622,10 +622,28 @@ type Query = {
 // 200
 // Note: this endpoint's meta has page/pageSize/limit/offset, but not total.
 type Response = {
-  data: Array<Booking & { receiptDownloadUrl: string }>;
+  data: Array<Booking & {
+    receiptDownloadUrl: string;
+    user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
+    module: {
+      id: string;
+      title: string;
+      number: string;
+      academicYear: string;
+      semester: string;
+      priceCents: number;
+      createdAt: string;
+      updatedAt: string;
+      access_status: 'full_access';
+    };
+  }>;
   meta: { page: number; pageSize: number; limit: number; offset: number };
 };
 ```
+
+The nested `user` is `null` after account deletion. The nested `module` contains
+current module details; `access_status` describes the signed-in admin's access.
+The existing `userId` and `moduleId` fields are retained.
 
 ### `PATCH /admin/bookings/:bookingId` — Admin
 
