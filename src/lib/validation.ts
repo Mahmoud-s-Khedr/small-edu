@@ -38,9 +38,11 @@ export const lectureInput = z.object({
   description: z.string().max(10_000).default(''),
   subject: z.string().trim().min(1).max(150),
   lectureDate: z.coerce.date(),
-  videoUrl: z.url().max(2_000),
+  videoUrl: z.url().max(2_000).nullable().optional(),
 });
-export const lecturePatch = lectureInput.partial().refine((value) => Object.keys(value).length > 0, 'At least one field is required');
+export const lecturePatch = lectureInput.partial()
+  .extend({ description: lectureInput.shape.description.removeDefault().optional() })
+  .refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 
 const flashcardFields = z.object({
   frontText: z.string().max(10_000).nullable().optional(),

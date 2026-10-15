@@ -26,7 +26,7 @@ type Lecture = {
   description: string;
   subject: string;
   lectureDate: string;
-  videoUrl: string;
+  videoUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -193,7 +193,7 @@ type Body = {
   description?: string; // up to 10,000 characters; defaults to ''
   subject: string;      // trimmed, 1–150 characters
   lectureDate: string;  // ISO 8601 UTC recommended
-  videoUrl: string;     // valid URL, up to 2,000 characters
+  videoUrl?: string | null;    // valid URL, up to 2,000 characters; defaults to null
 };
 ```
 
@@ -258,7 +258,8 @@ type Response = Success<Omit<Lecture, 'videoUrl'> & {
 **Path DTO:** `type Path = { lectureId: string }; // UUID`
 
 **Request DTO:** at least one property from `Partial<Body>` in the
-create-lecture DTO above.
+create-lecture DTO above. Omit `videoUrl` to keep its current value, or
+send `videoUrl: null` to clear it.
 
 **Expected response — `200 OK`:** `Success<Lecture>`.
 
@@ -281,7 +282,7 @@ call when the user starts playback.
 **Expected response — `200 OK`**
 
 ```ts
-type Response = Success<{ videoUrl: string }>;
+type Response = Success<{ videoUrl: string | null }>;
 ```
 
 **Important error:** `403 FORBIDDEN` when the user is not an admin and lacks

@@ -116,7 +116,7 @@ moduleRoutes.post('/:moduleId/lectures', requireAdmin, async (c) => {
   const moduleRow = await database.query.modules.findFirst({ where: eq(modules.id, moduleId) });
   if (!moduleRow) throw notFound('Module not found');
   const now = new Date();
-  const item = { id: crypto.randomUUID(), moduleId, ...input, createdAt: now, updatedAt: now };
+  const item = { id: crypto.randomUUID(), moduleId, ...input, videoUrl: input.videoUrl ?? null, createdAt: now, updatedAt: now };
   await database.insert(lectures).values(item);
   const [module] = await withModuleAccessStatus(c.env, c.get('user'), [moduleRow]);
   return c.json({ data: { ...item, module } }, 201);

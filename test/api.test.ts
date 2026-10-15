@@ -3,6 +3,7 @@ import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
 import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
 import paymentMethodsMigration from '../drizzle/0004_payment_methods.sql?raw';
+import nullableVideoMigration from '../drizzle/0005_cloudy_true_believers.sql?raw';
 import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion } from '../src/lib/account-deletion';
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -118,6 +119,21 @@ beforeAll(async () => {
   expect(await env.DB.prepare('SELECT * FROM module_access WHERE user_id = ?').bind(userId).first()).toBeNull();
   await env.DB.batch(uploadsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(paymentMethodsMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO lectures (id, module_id, title, subject, lecture_date, video_url, created_at, updated_at) VALUES (?, ?, 'Migration lecture', 'Subject', ?, 'https://example.test/video', ?, ?)").bind(lectureId, moduleId, migrationTime, migrationTime, migrationTime),
+    env.DB.prepare("INSERT INTO lecture_materials (id, lecture_id, object_key, original_filename, content_type, size_bytes, created_at, updated_at) VALUES ('migration-material', ?, 'migration/material', 'notes.pdf', 'application/pdf', 1, ?, ?)").bind(lectureId, migrationTime, migrationTime),
+    env.DB.prepare("INSERT INTO flashcards (id, lecture_id, front_text, back_text, created_at, updated_at) VALUES ('migration-card', ?, 'Front', 'Back', ?, ?)").bind(lectureId, migrationTime, migrationTime),
+    env.DB.prepare("INSERT INTO user_flashcard_state (user_id, flashcard_id, knowledge, updated_at) VALUES (?, 'migration-card', 'KNOWN', ?)").bind(secondUserId, migrationTime),
+    env.DB.prepare("INSERT INTO mcqs (id, lecture_id, question_text, created_at, updated_at) VALUES ('migration-mcq', ?, 'Question', ?, ?)").bind(lectureId, migrationTime, migrationTime),
+    env.DB.prepare("INSERT INTO mcq_choices (id, mcq_id, choice_text, ordering, is_correct) VALUES ('migration-choice', 'migration-mcq', 'Answer', 0, 1)"),
+  ]);
+  const preservedTables = ['lectures', 'lecture_materials', 'flashcards', 'user_flashcard_state', 'mcqs', 'mcq_choices'];
+  const beforeVideoMigration = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
+  await env.DB.batch(nullableVideoMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  const afterVideoMigration = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
+  expect(afterVideoMigration.map((result) => result.results)).toEqual(beforeVideoMigration.map((result) => result.results));
+  expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+
 });
 
 afterAll(() => vi.unstubAllGlobals());
@@ -442,6 +458,31 @@ describe('Medly API', () => {
 
     const module = { title: 'Super-admin course', number: '901', academicYear: '2026', semester: 'Fall', priceCents: 0 };
     expect((await json('/api/v1/modules', 'POST', module, superAdminId)).status).toBe(201);
+  });
+
+  it.each([{}, { videoUrl: null }])('allows creating a lecture without a video: %j', async (video) => {
+    await json('/api/v1/modules', 'POST', { title: 'Optional videos', number: '1', academicYear: '2026', semester: 'Fall', priceCents: 0 });
+    const module = await env.DB.prepare('SELECT id FROM modules LIMIT 1').first<{ id: string }>();
+    const created = await json(`/api/v1/modules/${module!.id}/lectures`, 'POST', {
+      title: 'No video', description: 'Keep this description', subject: 'Subject', lectureDate: new Date().toISOString(), ...video,
+    });
+    expect(created.status).toBe(201);
+    const { data: lecture } = await created.json() as { data: { id: string; videoUrl: string | null } };
+    expect(lecture.videoUrl).toBeNull();
+    const path = `/api/v1/lectures/${lecture.id}`;
+    expect(await (await request(path, { headers: auth(userId) })).json()).toMatchObject({ data: { videoUrl: null, videoLocked: false } });
+    expect(await (await request(`${path}/video`, { headers: auth(userId) })).json()).toEqual({ data: { videoUrl: null } });
+
+    const url = 'https://example.test/video';
+    expect(await (await json(path, 'PATCH', { videoUrl: url })).json()).toMatchObject({ data: { videoUrl: url } });
+    expect(await (await json(path, 'PATCH', { title: 'Renamed' })).json()).toMatchObject({ data: { title: 'Renamed', description: 'Keep this description', videoUrl: url } });
+    expect(await (await json(path, 'PATCH', { videoUrl: null })).json()).toMatchObject({ data: { videoUrl: null } });
+    expect(await env.DB.prepare('SELECT video_url FROM lectures WHERE id = ?').bind(lecture.id).first()).toEqual({ video_url: null });
+    expect((await json(path, 'PATCH', {})).status).toBe(422);
+    for (const videoUrl of ['', 'invalid', 'https://example.test/' + 'a'.repeat(2000)]) {
+      expect((await json(path, 'PATCH', { videoUrl })).status).toBe(422);
+      expect((await json(`/api/v1/modules/${module!.id}/lectures`, 'POST', { title: 'Invalid', subject: 'Subject', lectureDate: new Date().toISOString(), videoUrl })).status).toBe(422);
+    }
   });
 
   it('enforces the module-to-lecture relationship and cascade deletion', async () => {

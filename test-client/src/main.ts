@@ -116,13 +116,13 @@ const presets: Preset[] = [
   { group: 'Modules', label: 'Create lecture in module', method: 'POST', path: '/modules/:moduleId/lectures', params: [moduleId()], saveIdAs: 'lectureId', body: [
     { name: 'title', label: 'Title', required: true, placeholder: 'API test lecture' }, { name: 'subject', label: 'Subject', required: true, placeholder: 'Testing' },
     { name: 'description', label: 'Description', type: 'textarea', fullWidth: true }, { name: 'lectureDate', label: 'Lecture date and time', type: 'datetime-local', required: true },
-    { name: 'videoUrl', label: 'Video URL', type: 'url', required: true, placeholder: 'https://example.com/video' },
+    { name: 'videoUrl', label: 'Video URL', placeholder: 'https://example.com/video', help: 'Optional. Leave blank or enter null for no video.' },
   ] },
   { group: 'Lectures and materials', label: 'List lectures', method: 'GET', path: '/lectures', query: [page(), pageSize(), { name: 'moduleId', label: 'Module ID', suggestion: 'moduleId' }, { name: 'subject', label: 'Subject' }, { name: 'academicYear', label: 'Academic year' }, { name: 'semester', label: 'Semester' }, { name: 'from', label: 'From date', type: 'datetime-local' }, { name: 'to', label: 'To date', type: 'datetime-local' }], saveIdAs: 'lectureId' },
   { group: 'Lectures and materials', label: 'Get lecture', method: 'GET', path: '/lectures/:lectureId', params: [lectureId()], saveIdAs: 'lectureId' },
   { group: 'Lectures and materials', label: 'Update lecture', method: 'PATCH', path: '/lectures/:lectureId', params: [lectureId()], body: [
     { name: 'title', label: 'Title' }, { name: 'subject', label: 'Subject' }, { name: 'description', label: 'Description', type: 'textarea', fullWidth: true },
-    { name: 'lectureDate', label: 'Lecture date and time', type: 'datetime-local' }, { name: 'videoUrl', label: 'Video URL', type: 'url' },
+    { name: 'lectureDate', label: 'Lecture date and time', type: 'datetime-local' }, { name: 'videoUrl', label: 'Video URL', help: 'Leave blank to keep the URL; enter null to clear it.' },
   ] },
   { group: 'Lectures and materials', label: 'Delete lecture', method: 'DELETE', path: '/lectures/:lectureId', params: [lectureId()] },
   { group: 'Lectures and materials', label: 'List materials', method: 'GET', path: '/lectures/:lectureId/materials', params: [lectureId()], saveIdAs: 'materialId' },

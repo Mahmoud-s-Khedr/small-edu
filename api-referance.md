@@ -108,7 +108,7 @@ type Lecture = {
   description: string;
   subject: string;
   lectureDate: string;
-  videoUrl: string;
+  videoUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -358,7 +358,7 @@ type Body = {
   description?: string; // maximum 10,000 characters; defaults to ""
   subject: string;     // 1–150 characters
   lectureDate: string; // ISO 8601 date/time recommended
-  videoUrl: string;    // valid URL, maximum 2,000 characters
+  videoUrl?: string | null;   // valid URL, maximum 2,000 characters; defaults to null
 };
 
 // 201
@@ -417,7 +417,8 @@ type Response = Success<ResponseBody>;
 ### `PATCH /lectures/:lectureId` — Admin
 
 At least one field is required. Each supplied field has the same validation as
-the lecture-create DTO.
+the lecture-create DTO. Omit `videoUrl` to keep its current value, or send
+`videoUrl: null` to clear it.
 
 ```ts
 type Path = { lectureId: string };
@@ -426,7 +427,7 @@ type Body = Partial<{
   description: string;
   subject: string;
   lectureDate: string;
-  videoUrl: string;
+  videoUrl: string | null;
 }>;
 
 // 200
@@ -537,7 +538,7 @@ URL only after that access check.
 ```ts
 type Path = { lectureId: string };
 // 200
-type Response = Success<{ videoUrl: string }>;
+type Response = Success<{ videoUrl: string | null }>;
 ```
 
 ### `DELETE /me`

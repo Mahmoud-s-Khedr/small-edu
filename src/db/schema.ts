@@ -65,7 +65,7 @@ export const lectures = sqliteTable('lectures', {
   description: text('description').notNull().default(''),
   subject: text('subject').notNull(),
   lectureDate: integer('lecture_date', { mode: 'timestamp_ms' }).notNull(),
-  videoUrl: text('video_url').notNull(),
+  videoUrl: text('video_url'),
   ...timestamps,
 }, (table) => [
   index('lectures_module_idx').on(table.moduleId),
