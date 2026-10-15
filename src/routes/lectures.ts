@@ -78,7 +78,10 @@ lectureRoutes.patch('/:lectureId', requireAdmin, async (c) => {
   if (!existing) throw notFound('Lecture not found');
   const updatedAt = new Date();
   await database.update(lectures).set({ ...input, updatedAt }).where(eq(lectures.id, lectureId));
-  return c.json({ data: { ...existing, ...input, updatedAt } });
+  const moduleRow = await database.query.modules.findFirst({ where: eq(modules.id, existing.moduleId) });
+  if (!moduleRow) throw notFound('Module not found');
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [moduleRow]);
+  return c.json({ data: { ...existing, ...input, updatedAt, module } });
 });
 
 lectureRoutes.delete('/:lectureId', requireAdmin, async (c) => {

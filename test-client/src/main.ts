@@ -281,6 +281,9 @@ function rememberResponse(preset: Preset, payload: unknown): void {
     if ('mcqId' in item && 'choiceText' in item) remember('choiceId', item.id);
     for (const [key, nested] of Object.entries(item)) {
       if (key === 'moduleId' || key === 'lectureId' || key === 'flashcardId' || key === 'mcqId' || key === 'bookingId' || key === 'userId' || key === 'materialId' || key === 'choiceId') remember(key, nested);
+      if ((key === 'module' || key === 'user') && nested && typeof nested === 'object' && 'id' in nested) {
+        remember(key === 'module' ? 'moduleId' : 'userId', nested.id);
+      }
       visit(nested);
     }
   };

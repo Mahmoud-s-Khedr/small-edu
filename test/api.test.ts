@@ -312,7 +312,7 @@ describe('Medly API', () => {
     expect(new URL(receiptDownload.headers.get('Location') ?? '').searchParams.get('X-Amz-Expires')).toBe('600');
     const decision = await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' });
     expect(decision.status).toBe(200);
-    expect(await decision.json()).toMatchObject({ data: { userId: null, status: 'ACCEPTED' } });
+    expect(await decision.json()).toMatchObject({ data: { userId: null, user: null, status: 'ACCEPTED' } });
     expect(await env.DB.prepare('SELECT * FROM module_access').all()).toMatchObject({ results: [] });
     expect(await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first()).not.toBeNull();
     const freshToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'new-firebase-uid' });
@@ -611,10 +611,14 @@ describe('Medly API', () => {
     const list = async () => {
       const response = await request('/api/v1/admin/bookings?status=PENDING', { headers: auth(actor) });
       expect(response.status).toBe(200);
-      return await response.json() as { data: Array<{ id: string; userId: string | null; user: unknown; module: unknown; receiptDownloadUrl: string }> };
+      return await response.json() as { data: Array<{ id: string; user: unknown; module: unknown; receiptDownloadUrl: string }> };
     };
     const result = await list();
     expect(result.data.map((row) => row.id)).toEqual([bookingIds[1], bookingIds[0]]);
+    for (const row of result.data) {
+      expect(row).toHaveProperty('userId', (row.user as { id: string }).id);
+      expect(row).toHaveProperty('moduleId', (row.module as { id: string }).id);
+    }
     expect(result.data[1]!.user).toEqual({ id: userId, name: 'Student', email: 'student@example.test', role: 'USER' });
     expect(result.data[0]!.user).toEqual({ id: secondUserId, name: 'Other Student', email: 'other@example.test', role: 'USER' });
     expect(result.data[1]!.module).toEqual({
@@ -625,13 +629,54 @@ describe('Medly API', () => {
     await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(secondUserId).run();
     const retained = await list();
     expect(retained.data).toHaveLength(2);
-    expect(retained.data[0]).toMatchObject({ id: bookingIds[1], userId: null, user: null, module: { id: otherModuleId } });
+    expect(retained.data[0]).toMatchObject({ id: bookingIds[1], userId: null, user: null, moduleId: otherModuleId, module: { id: otherModuleId } });
     expect(retained.data[0]!.receiptDownloadUrl).toContain('X-Amz-Signature=');
     expect(retained.data[0]).not.toHaveProperty('receiptKey');
     const studentList = await request('/api/v1/bookings', { headers: auth(userId) });
     const studentBody = await studentList.json() as { data: unknown[] };
-    expect(studentBody.data[0]).not.toHaveProperty('user');
-    expect(studentBody.data[0]).not.toHaveProperty('module');
+    expect(studentBody.data[0]).toHaveProperty('user.id', userId);
+    expect(studentBody.data[0]).toHaveProperty('userId', userId);
+    expect(studentBody.data[0]).toHaveProperty('module.id', moduleId);
+    expect(studentBody.data[0]).toHaveProperty('moduleId', moduleId);
+  });
+
+  it('preserves IDs alongside nested references across lecture, booking, and flashcard-state responses', async () => {
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, price_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(moduleId, 'Nested references', '10', '2026', 'Fall', 100, now, now).run();
+    const read = async (response: Response, status = 200) => {
+      expect(response.status).toBe(status);
+      const body = await response.json() as { data: Record<string, unknown> | Array<Record<string, unknown>> };
+      for (const item of Array.isArray(body.data) ? body.data : [body.data]) {
+        if ('module' in item) expect(item.moduleId).toBe((item.module as { id: string }).id);
+        if ('user' in item) expect(item.userId).toBe((item.user as { id: string } | null)?.id ?? null);
+      }
+      return body.data;
+    };
+    const created = await read(await json(`/api/v1/modules/${moduleId}/lectures`, 'POST', {
+      title: 'Lecture', subject: 'Anatomy', lectureDate: new Date(now).toISOString(), videoUrl: 'https://example.test/video',
+    }), 201) as Record<string, unknown>;
+    expect(created).toMatchObject({ module: { id: moduleId, title: 'Nested references', access_status: 'full_access' } });
+    const id = created.id as string;
+    const updated = await read(await json(`/api/v1/lectures/${id}`, 'PATCH', { title: 'Updated lecture' }));
+    expect(updated).toMatchObject({ title: 'Updated lecture', module: { id: moduleId } });
+    for (const path of ['/lectures', `/lectures/${id}`, `/modules/${moduleId}/lectures`]) {
+      const data = await read(await request(`/api/v1${path}`, { headers: auth(userId) }));
+      const lecture = Array.isArray(data) ? data[0] : data;
+      expect(lecture).toMatchObject({ videoUrl: null, module: { id: moduleId, access_status: 'default' } });
+    }
+    const key = `payment-receipts/${userId}/nested.pdf`;
+    await env.STORAGE.put(key, 'receipt', { httpMetadata: { contentType: 'application/pdf' } });
+    const booking = await read(await json('/api/v1/bookings', 'POST', { moduleId, receiptKey: key }, userId), 201) as Record<string, unknown>;
+    expect(booking).toMatchObject({ user: { id: userId, name: 'Student' }, module: { id: moduleId, access_status: 'pending' } });
+    const decided = await read(await json(`/api/v1/admin/bookings/${booking.id}`, 'PATCH', { status: 'ACCEPTED' }));
+    expect(decided).toMatchObject({ user: { id: userId }, module: { id: moduleId, access_status: 'full_access' } });
+    const history = await read(await request('/api/v1/bookings', { headers: auth(userId) }));
+    expect(history).toMatchObject([{ user: { id: userId }, module: { id: moduleId, access_status: 'approved' } }]);
+    const cardResponse = await json(`/api/v1/lectures/${id}/flashcards`, 'POST', { frontText: 'Front', backText: 'Back' });
+    const card = await cardResponse.json() as { data: { id: string } };
+    const state = await read(await json(`/api/v1/flashcards/${card.data.id}/state`, 'PUT', { knowledge: 'KNOWN' }, userId));
+    expect(state).toMatchObject({ user: { id: userId, name: 'Student' }, knowledge: 'KNOWN' });
   });
 
   it('filters both booking lists by status and creation date before admin pagination', async () => {

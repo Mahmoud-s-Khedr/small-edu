@@ -19,14 +19,12 @@ const moduleDto = moduleInput.extend({
   access_status: z.enum(['default', 'full_access', 'pending', 'approved'])
     .describe('Current user access: default = no access; full_access = admin; pending = receipt awaiting approval; approved = granted access or free module'),
 }).openapi('Module');
-const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, createdAt: dateTime, updatedAt: dateTime, videoLocked: z.boolean().optional() }).openapi('Lecture');
+const lectureDto = lectureInput.extend({ id: uuid, moduleId: uuid, module: moduleDto, createdAt: dateTime, updatedAt: dateTime, videoLocked: z.boolean().optional() }).openapi('Lecture');
 const lectureReadDto = lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto });
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime, downloadUrl: z.string().url() }).openapi('Material');
-const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
+const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, user: user.nullable(), module: moduleDto, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
 const adminBooking = booking.extend({
   receiptDownloadUrl: z.string().url(),
-  user: user.nullable(),
-  module: moduleDto,
 }).openapi('AdminBooking');
 const flashcard = z.object({ id: uuid, lectureId: uuid, frontText: z.string().nullable(), backText: z.string().nullable(), frontImageUrl: z.string().nullable(), backImageUrl: z.string().nullable(), ordering: z.number().int(), createdAt: dateTime, updatedAt: dateTime }).openapi('Flashcard');
 const mcq = z.object({ id: uuid, lectureId: uuid, questionText: z.string(), ordering: z.number().int(), choices: z.array(z.object({ id: uuid, choiceText: z.string(), isCorrect: z.boolean(), ordering: z.number().int() })) }).openapi('Mcq');
@@ -152,7 +150,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/flashcards/{flashcardId}', ['Flashcards'], 'Get a flashcard', envelope(flashcard), { params: flashcardIdParam });
   secured('patch', '/flashcards/{flashcardId}', ['Flashcards'], 'Update a flashcard (admin)', envelope(flashcard), { params: flashcardIdParam, body: { content: { 'application/json': { schema: flashcardPatch } } } });
   noContent('delete', '/flashcards/{flashcardId}', ['Flashcards'], 'Delete a flashcard (admin)', { params: flashcardIdParam });
-  secured('put', '/flashcards/{flashcardId}/state', ['Flashcards'], 'Update the current user’s flashcard state', envelope(z.object({ knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() })), { params: flashcardIdParam, body: { content: { 'application/json': { schema: z.object({ knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() }) } } } });
+  secured('put', '/flashcards/{flashcardId}/state', ['Flashcards'], 'Update the current user’s flashcard state', envelope(z.object({ userId: uuid, user, flashcardId: uuid, knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() })), { params: flashcardIdParam, body: { content: { 'application/json': { schema: z.object({ knowledge: z.enum(['KNOWN', 'UNKNOWN']).nullable().optional(), hidden: z.boolean().optional(), viewed: z.boolean().optional() }) } } } });
   secured('get', '/lectures/{lectureId}/flashcards/progress', ['Flashcards'], 'Get flashcard progress', envelope(z.object({ total: z.number().int(), known: z.number().int(), hidden: z.number().int() })), { params: lectureIdParam });
 
   secured('post', '/uploads', ['Uploads'], 'Create a direct R2 upload URL', envelope(presignedUpload), { body: { content: { 'application/json': { schema: uploadRequest } } } }, 201);

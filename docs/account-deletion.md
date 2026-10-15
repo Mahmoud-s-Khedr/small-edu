@@ -2,7 +2,7 @@
 
 `DELETE /api/v1/me` deletes the caller's Firebase identity and local Medly
 account. It accepts no target user ID or email. Payment receipts are retained,
-including unsubmitted uploads; booking records survive with `userId: null`.
+including unsubmitted uploads; booking records survive with `userId: null` and `user: null`.
 Shared educational content is unaffected. Module access and flashcard progress
 are removed through the existing user foreign-key cascades.
 
@@ -100,7 +100,7 @@ course access or flashcard progress. Retained bookings are not matched by email
 or attached to the new account. Receipt keys remain under the old local UUID;
 new accounts cannot claim them through the upload or booking endpoints.
 
-Admin booking lists allow `userId: null`. Admins can still download retained
+Admin booking lists allow `userId: null` and `user: null`. Admins can still download retained
 receipts and accept/reject pending retained bookings. An accepted booking with
 no active user does not grant module access.
 

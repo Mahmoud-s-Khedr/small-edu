@@ -154,6 +154,7 @@ At least one property is required. `viewed: true` records the current time;
 ```ts
 type Response = Success<{
   userId: string;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' };
   flashcardId: string;
   knowledge: Knowledge | null;
   hidden: boolean;

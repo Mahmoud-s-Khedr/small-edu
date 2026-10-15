@@ -21,6 +21,7 @@ type Module = {
 type Lecture = {
   id: string;
   moduleId: string;
+  module: Module;
   title: string;
   description: string;
   subject: string;

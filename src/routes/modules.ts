@@ -113,11 +113,13 @@ moduleRoutes.post('/:moduleId/lectures', requireAdmin, async (c) => {
   const { moduleId } = moduleIdParam.parse(c.req.param());
   const input = lectureInput.parse(await c.req.json());
   const database = db(c.env.DB);
-  if (!await database.query.modules.findFirst({ where: eq(modules.id, moduleId) })) throw notFound('Module not found');
+  const moduleRow = await database.query.modules.findFirst({ where: eq(modules.id, moduleId) });
+  if (!moduleRow) throw notFound('Module not found');
   const now = new Date();
   const item = { id: crypto.randomUUID(), moduleId, ...input, createdAt: now, updatedAt: now };
   await database.insert(lectures).values(item);
-  return c.json({ data: item }, 201);
+  const [module] = await withModuleAccessStatus(c.env, c.get('user'), [moduleRow]);
+  return c.json({ data: { ...item, module } }, 201);
 });
 
 export { lecturePatch };

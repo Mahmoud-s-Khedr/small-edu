@@ -159,7 +159,7 @@ flashcardRoutes.put('/flashcards/:flashcardId/state', async (c) => {
     .bind(values.userId, flashcardId, values.knowledge, Number(values.hidden), values.viewedAt?.getTime() ?? null,
       now.getTime(), values.userId, Number(input.knowledge !== undefined), Number(input.hidden !== undefined), Number(!!input.viewed)).run();
   if (!result.meta.changes) throw unauthorized('This account is being deleted');
-  return c.json({ data: { ...values, ...input, updatedAt: now } });
+  return c.json({ data: { ...values, ...input, updatedAt: now, user: c.get('user') } });
 });
 
 flashcardRoutes.get('/lectures/:lectureId/flashcards/progress', async (c) => {

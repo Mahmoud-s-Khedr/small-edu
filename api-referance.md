@@ -89,6 +89,7 @@ type User = {
 };
 
 type Module = {
+  access_status: 'default' | 'full_access' | 'pending' | 'approved';
   id: string;
   title: string;
   number: string;
@@ -102,6 +103,7 @@ type Module = {
 type Lecture = {
   id: string;
   moduleId: string;
+  module: Module;
   title: string;
   description: string;
   subject: string;
@@ -123,8 +125,10 @@ type Material = {
 
 type Booking = {
   id: string;
-  userId: string | null; // Null after account deletion.
+  userId: string | null;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
   moduleId: string;
+  module: Module;
   receiptFilename: string;
   receiptContentType: string;
   receiptSizeBytes: number;
@@ -544,7 +548,7 @@ Accepts no deletion target in the request. Returns `202` with
 `401 REAUTHENTICATION_REQUIRED` requires Firebase reauthentication.
 
 Firebase and local account deletion runs in the background with scheduled retries.
-Bookings survive with `userId: null`; all R2 payment receipts are retained.
+Bookings survive with `userId: null` and `user: null`; all R2 payment receipts are retained.
 Module access and flashcard progress are removed. A new Firebase UID may register
 using the same email after completion and receives a fresh `USER` account.
 See [account deletion](docs/account-deletion.md) for configuration and retry behavior.
@@ -622,28 +626,16 @@ type Query = {
 // 200
 // Note: this endpoint's meta has page/pageSize/limit/offset, but not total.
 type Response = {
-  data: Array<Booking & {
-    receiptDownloadUrl: string;
-    user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
-    module: {
-      id: string;
-      title: string;
-      number: string;
-      academicYear: string;
-      semester: string;
-      priceCents: number;
-      createdAt: string;
-      updatedAt: string;
-      access_status: 'full_access';
-    };
-  }>;
+  data: Array<Booking & { receiptDownloadUrl: string }>;
   meta: { page: number; pageSize: number; limit: number; offset: number };
 };
 ```
 
 The nested `user` is `null` after account deletion. The nested `module` contains
 current module details; `access_status` describes the signed-in admin's access.
-The existing `userId` and `moduleId` fields are retained.
+Responses include nested `user` and `module` objects alongside the existing
+`userId` and `moduleId` fields for backward compatibility. Requests and filters
+continue to use IDs.
 
 ### `PATCH /admin/bookings/:bookingId` — Admin
 
@@ -784,6 +776,7 @@ type Body = {
 // 200
 type Response = Success<{
   userId: string;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' };
   flashcardId: string;
   knowledge: Knowledge | null;
   hidden: boolean;

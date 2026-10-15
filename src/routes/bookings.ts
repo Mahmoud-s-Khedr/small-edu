@@ -9,7 +9,8 @@ import { adminBookingFilters, bookingDateBoundary, bookingFilters } from '../lib
 import { bookingIdParam } from '../lib/validation';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { createPresignedDownload } from '../lib/presigned-uploads';
-import type { AppBindings } from '../types';
+import { withModuleAccessStatus } from '../lib/access';
+import type { AppBindings, AuthUser } from '../types';
 
 const createBooking = z.object({ moduleId: z.string().uuid(), receiptKey: z.string().min(1).max(500) });
 const receiptKeyInput = z.object({ receiptKey: z.string().min(1).max(500) });
@@ -25,15 +26,27 @@ function bookingConditions(query: { status?: 'PENDING' | 'ACCEPTED' | 'REJECTED'
 export const bookingRoutes = new ApiRouter<AppBindings>('/bookings');
 bookingRoutes.use('*', requireAuth);
 
-async function adminBookingResponse(env: Env, booking: typeof bookingRequests.$inferSelect) {
-  const { receiptKey, ...publicBooking } = booking;
-  return {
-    ...publicBooking,
-    receiptDownloadUrl: await createPresignedDownload(env, receiptKey, {
-      contentType: booking.receiptContentType,
-      filename: booking.receiptFilename,
-    }),
-  };
+function bookingQuery(env: Env) {
+  return db(env.DB).select({
+    booking: bookingRequests,
+    user: { id: users.id, name: users.name, email: users.email, role: users.role },
+    module: modules,
+  }).from(bookingRequests)
+    .leftJoin(users, eq(bookingRequests.userId, users.id))
+    .innerJoin(modules, eq(bookingRequests.moduleId, modules.id));
+}
+
+async function bookingResponses(env: Env, actor: AuthUser, rows: Awaited<ReturnType<typeof bookingQuery>>, includeReceipt = false) {
+  const moduleDtos = await withModuleAccessStatus(env, actor, rows.map((row) => row.module));
+  return Promise.all(rows.map(async ({ booking, user }, index) => {
+    const { receiptKey, ...publicBooking } = booking;
+    return {
+      ...publicBooking, user, module: moduleDtos[index]!,
+      ...(includeReceipt ? { receiptDownloadUrl: await createPresignedDownload(env, receiptKey, {
+        contentType: booking.receiptContentType, filename: booking.receiptFilename,
+      }) } : {}),
+    };
+  }));
 }
 
 bookingRoutes.post('/', async (c) => {
@@ -63,7 +76,7 @@ bookingRoutes.post('/', async (c) => {
     if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) throw conflict('An active booking already exists for this module');
     throw error;
   }
-  const { receiptKey: _receiptKey, ...response } = item;
+  const [response] = await bookingResponses(c.env, user, await bookingQuery(c.env).where(eq(bookingRequests.id, item.id)));
   return c.json({ data: response }, 201);
 });
 
@@ -77,10 +90,10 @@ bookingRoutes.delete('/receipt', async (c) => {
 bookingRoutes.get('/', async (c) => {
   const user = c.get('user');
   const query = bookingFilters.parse(c.req.query());
-  const items = await db(c.env.DB).select().from(bookingRequests)
+  const items = await bookingQuery(c.env)
     .where(and(eq(bookingRequests.userId, user.id), ...bookingConditions(query)))
     .orderBy(desc(bookingRequests.createdAt));
-  return c.json({ data: items.map(({ receiptKey: _receiptKey, ...item }) => item) });
+  return c.json({ data: await bookingResponses(c.env, user, items) });
 });
 
 export const adminBookingRoutes = new ApiRouter<AppBindings>('/admin/bookings');
@@ -88,21 +101,11 @@ adminBookingRoutes.use('*', requireAuth, requireAdmin);
 adminBookingRoutes.get('/', async (c) => {
   const query = adminBookingFilters.parse(c.req.query());
   const p = pagination(query);
-  const items = await db(c.env.DB).select({
-    booking: bookingRequests,
-    user: { id: users.id, name: users.name, email: users.email, role: users.role },
-    module: modules,
-  }).from(bookingRequests)
-    .leftJoin(users, eq(bookingRequests.userId, users.id))
-    .innerJoin(modules, eq(bookingRequests.moduleId, modules.id))
+  const items = await bookingQuery(c.env)
     .where(and(...bookingConditions(query)))
     .orderBy(desc(bookingRequests.createdAt)).limit(p.limit).offset(p.offset);
   return c.json({
-    data: await Promise.all(items.map(async ({ booking, user, module }) => ({
-      ...await adminBookingResponse(c.env, booking),
-      user,
-      module: { ...module, access_status: 'full_access' as const },
-    }))),
+    data: await bookingResponses(c.env, c.get('user'), items, true),
     meta: p,
   });
 });
@@ -141,8 +144,7 @@ adminBookingRoutes.patch('/:bookingId', async (c) => {
     if (!existing) throw notFound('Booking request not found');
     throw conflict('Only pending booking requests can be decided');
   }
-  const booking = await database.query.bookingRequests.findFirst({ where: eq(bookingRequests.id, bookingId) });
-  if (!booking) throw notFound('Booking request not found');
-  const { receiptKey: _receiptKey, ...response } = booking;
+  const [response] = await bookingResponses(c.env, c.get('user'), await bookingQuery(c.env).where(eq(bookingRequests.id, bookingId)));
+  if (!response) throw notFound('Booking request not found');
   return c.json({ data: response });
 });

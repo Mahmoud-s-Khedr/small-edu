@@ -5,12 +5,26 @@ endpoints require a Firebase bearer token. Admin endpoints require a local
 `ADMIN` or `SUPER_ADMIN` role.
 
 ```ts
+type Module = {
+  id: string;
+  title: string;
+  number: string;
+  academicYear: string;
+  semester: string;
+  priceCents: number;
+  access_status: 'default' | 'full_access' | 'pending' | 'approved';
+  createdAt: string;
+  updatedAt: string;
+};
+
 type BookingStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
 type Booking = {
   id: string;
-  userId: string | null; // Null after account deletion.
+  userId: string | null;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
   moduleId: string;
+  module: Module;
   receiptFilename: string;
   receiptContentType: string;
   receiptSizeBytes: number;
@@ -145,28 +159,16 @@ type Query = {
 
 ```ts
 type Response = {
-  data: Array<Booking & {
-    receiptDownloadUrl: string;
-    user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
-    module: {
-      id: string;
-      title: string;
-      number: string;
-      academicYear: string;
-      semester: string;
-      priceCents: number;
-      createdAt: string;
-      updatedAt: string;
-      access_status: 'full_access';
-    };
-  }>;
+  data: Array<Booking & { receiptDownloadUrl: string }>;
   meta: { page: number; pageSize: number; limit: number; offset: number };
 };
 ```
 
 The nested `user` is `null` after account deletion. The nested `module` contains
 current module details; `access_status` describes the signed-in admin's access.
-The existing `userId` and `moduleId` fields are retained.
+Responses include nested `user` and `module` objects alongside the existing
+`userId` and `moduleId` fields for backward compatibility. Requests and filters
+continue to use IDs.
 
 Unlike the standard paginated response, this endpoint currently does not return
 `meta.total`.
@@ -200,7 +202,7 @@ type Body = { status: 'ACCEPTED' | 'REJECTED' };
 
 **Expected response — `200 OK`:** `Success<Booking>`.
 
-Bookings retained after account deletion have `userId: null`. Their receipts
+Bookings retained after account deletion have `userId: null` and `user: null`. Their receipts
 remain downloadable; decisions do not grant access when no active user exists.
 
 Only a `PENDING` booking may be decided. A second decision attempt returns
