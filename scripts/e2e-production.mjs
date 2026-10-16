@@ -70,7 +70,7 @@ async function prepare() {
     const accountPassword = password();
     const signup = await firebaseRequest(apiKey, 'accounts:signUp', { email, password: accountPassword, returnSecureToken: true, displayName: `Medly E2E ${role} ${runId}` });
     await firebaseRequest(apiKey, 'accounts:sendOobCode', { requestType: 'VERIFY_EMAIL', idToken: signup.idToken });
-    users[role] = { email, password: accountPassword, localId: signup.localId };
+    users[role] = { deviceId: randomUUID(), email, password: accountPassword, localId: signup.localId };
     logger.pass(`Firebase account created and verification email sent: ${role}`, { email });
   }
   const state = { version: 1, runId, apiBase: (process.env.MEDLY_E2E_API_BASE ?? defaultApiBase).replace(/\/+$/, ''), firebaseApiKey: apiKey, createdAt: new Date().toISOString(), users };
@@ -105,6 +105,8 @@ async function run() {
   const absoluteStatePath = resolve(process.cwd(), statePath);
   const state = json(absoluteStatePath);
   const directory = dirname(absoluteStatePath);
+  for (const account of Object.values(state.users)) account.deviceId ??= randomUUID();
+  writeState(directory, state);
   const logger = new Logger(directory);
   logger.event('run-start', { runId: state.runId, apiBase: state.apiBase });
   let actors;
@@ -116,7 +118,10 @@ async function run() {
   }
   async function request(name, actor, method, path, options = {}) {
     const headers = new Headers(options.headers);
-    if (actor) headers.set('Authorization', `Bearer ${actor.idToken}`);
+    if (actor) {
+      headers.set('Authorization', `Bearer ${actor.idToken}`);
+      if (!headers.has('X-Device-ID')) headers.set('X-Device-ID', actor.deviceId);
+    }
     let body;
     if (options.json !== undefined) { headers.set('content-type', 'application/json'); body = JSON.stringify(options.json); }
     const response = await fetch(`${state.apiBase}${path}`, { method, headers, body });
@@ -175,6 +180,8 @@ async function run() {
       expect(`session provisioning is idempotent: ${role}`, await request(`session-${role}`, actors[role], 'POST', '/auth/session'), 200);
       const me = expect(`current identity: ${role}`, await request(`me-${role}`, actors[role], 'GET', '/me'), 200);
       ids[role] = me.id;
+      check(`device UUID omitted from profile: ${role}`, !JSON.stringify(me).includes(actors[role].deviceId) && !Object.hasOwn(me, 'device'));
+
     }
     if (flag('--bootstrap-superadmin')) {
       logger.event('bootstrap-superadmin', { email: actors.superadmin.email });
@@ -191,6 +198,15 @@ async function run() {
     expect('super-admin lists users', await request('superadmin-list-users', actors.superadmin, 'GET', '/admin/users'), 200);
     const promoted = expect('super-admin promotes admin test user', await request('promote-admin', actors.superadmin, 'PATCH', `/admin/users/${ids.admin}/role`, { json: { role: 'ADMIN' } }), 200);
     check('admin role promotion persisted', promoted.role === 'ADMIN', { role: promoted.role });
+    const setting = expect('super-admin reads device restriction', await request('device-setting', actors.superadmin, 'GET', '/admin/settings/device-restriction'), 200);
+    for (const role of ['student', 'admin', 'superadmin']) {
+      const restricted = setting.DEVICE_RESTRICTION_ENABLED && role === 'student';
+      const mismatch = await request(`device-mismatch-${role}`, actors[role], 'GET', '/me', { headers: { 'X-Device-ID': randomUUID() } });
+      expect(`device policy applies: ${role}`, mismatch, restricted ? 401 : 200);
+      if (restricted) check(`device mismatch code: ${role}`, mismatch.payload?.error?.code === 'DEVICE_MISMATCH');
+      const malformed = await request(`device-invalid-${role}`, actors[role], 'POST', '/auth/session', { headers: { 'X-Device-ID': '' } });
+      expect(`device header requirement: ${role}`, malformed, restricted ? 422 : 200);
+    }
     expect('student cannot create a module', await request('student-create-module', actors.student, 'POST', '/modules', { json: { title: 'Denied', number: 'DENIED', academicYear: '2026', semester: 'E2E', priceCents: 0 } }), 403);
     const mainModule = expect('admin creates primary module', await request('create-main-module', actors.admin, 'POST', '/modules', { json: { title: `Medly E2E ${state.runId}`, number: `E2E-${state.runId.slice(-8)}`, academicYear: '2026', semester: 'E2E', priceCents: 1250 } }), 201);
     ids.mainModule = mainModule.id; cleanupNeeded = true;

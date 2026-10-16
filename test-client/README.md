@@ -40,3 +40,15 @@ Suggested end-to-end sequence: create a module and lecture as an admin; upload/l
 If a direct upload fails in the browser with a CORS error, check both the deployed Worker configuration and the R2 bucket CORS policy include the exact origin `http://localhost:5173`; the R2 rule must permit `PUT` and the `Content-Type` header.
 
 The Firebase web configuration in `src/main.ts` is public client configuration, not a secret. Do not add a Firebase service-account key or user password to this repository.
+
+## Optional student device restriction
+
+The client persists `medly-device-id` in localStorage, sends `X-Device-ID`, and
+calls backend logout before Firebase sign-out. Retain this storage value.
+In the **Admin settings** operations, an admin or super admin can read or change
+`DEVICE_RESTRICTION_ENABLED`. It defaults to disabled in D1. When enabled, use
+two browser profiles to check that students are limited to one profile, while
+both admin roles can access the account from either profile. The **Reset account
+device** operation lets admins recover a student's lost registration.
+
+See the [integration guide](../docs/integration/device-registration-update.md).

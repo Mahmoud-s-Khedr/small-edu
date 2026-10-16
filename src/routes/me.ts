@@ -17,7 +17,7 @@ meRoutes.delete('/', async (c) => {
   if (!value?.startsWith('Bearer ')) throw unauthorized();
   const identity = await verifyFirebaseIdToken(value.slice(7), c.env);
   if (!identity) throw unauthorized('Invalid or expired Firebase ID token');
-  const job = await requestAccountDeletion(c.env, identity);
+  const job = await requestAccountDeletion(c.env, identity, c.req.header('X-Device-ID'));
   if (!job.completed_at) c.executionCtx.waitUntil(processAccountDeletion(c.env, identity.subject));
   return c.json({ data: { status: job.completed_at ? 'completed' as const : 'pending' as const } }, 202);
 });

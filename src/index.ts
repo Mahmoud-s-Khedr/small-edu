@@ -14,13 +14,14 @@ import { paymentMethodRoutes } from './routes/payment-methods';
 import { uploadRoutes } from './routes/uploads';
 import { adminUserRoutes } from './routes/users';
 import { catalogRoutes } from './routes/catalog';
+import { adminSettingsRoutes } from './routes/settings';
 import { errorHandler } from './middleware/error';
 import type { AppBindings } from './types';
 
 const app = new OpenAPIHono<AppBindings>();
 app.use('*', async (c, next) => {
   const origins = c.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [];
-  return cors({ origin: (origin) => origins.includes('*') || origins.includes(origin) ? origin : '', credentials: true })(c, next);
+  return cors({ origin: (origin) => origins.includes('*') || origins.includes(origin) ? origin : '', allowHeaders: ['Authorization', 'Content-Type', 'X-Device-ID'], credentials: true })(c, next);
 });
 app.onError(errorHandler);
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -48,6 +49,7 @@ api.route('/', mcqRoutes);
 api.route('/bookings', bookingRoutes);
 api.route('/admin/bookings', adminBookingRoutes);
 api.route('/admin/users', adminUserRoutes);
+api.route('/admin/settings', adminSettingsRoutes);
 app.route('/api/v1', api);
 
 export default {

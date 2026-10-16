@@ -3,6 +3,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import type { MiddlewareHandler } from 'hono';
 import { db } from '../db/client';
 import { users } from '../db/schema';
+import { checkDevice, deviceId, restrictDevice } from '../lib/devices';
 import { forbidden, unauthorized } from '../lib/errors';
 import type { AppBindings, AuthUser, Role } from '../types';
 
@@ -75,17 +76,18 @@ export async function verifyFirebaseIdToken(
   }
 }
 
-export async function resolveUser(token: string, env: Env): Promise<AuthUser | null> {
+export async function resolveUser(token: string, env: Env, presented?: string): Promise<AuthUser | null> {
   const identity = await verifyFirebaseIdToken(token, env);
   if (!identity) return null;
   const user = await db(env.DB).query.users.findFirst({ where: and(eq(users.externalSubject, identity.subject), isNull(users.deletionRequestedAt)) });
+  if (user && await restrictDevice(env, user.role)) checkDevice(user.device, deviceId(presented));
   return user ? { id: user.id, email: user.email, name: user.name, role: user.role } : null;
 }
 
 export const requireAuth: MiddlewareHandler<AppBindings> = async (c, next) => {
   const value = c.req.header('Authorization');
   if (!value?.startsWith('Bearer ')) throw unauthorized();
-  const user = await resolveUser(value.slice(7), c.env);
+  const user = await resolveUser(value.slice(7), c.env, c.req.header('X-Device-ID'));
   if (!user) throw unauthorized('Invalid or expired authentication token');
   c.set('user', user);
   await next();

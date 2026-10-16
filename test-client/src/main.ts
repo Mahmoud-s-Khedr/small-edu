@@ -34,6 +34,7 @@ type Field = {
   options?: Array<[string, string]>;
   suggestion?: string;
   fullWidth?: boolean;
+  booleanValue?: boolean;
 };
 type FileField = { accept: string; label: string; help: string };
 type DirectUpload = { purpose: 'lecture-material' | 'payment-receipt' | 'flashcard-image'; requiresLecture?: boolean; attachMaterial?: boolean; attachFlashcardImage?: boolean };
@@ -89,14 +90,17 @@ const paymentMethodId = (): Field => ({ name: 'paymentMethodId', label: 'Payment
 const userId = (): Field => ({ name: 'userId', label: 'User ID', placeholder: 'Choose or paste a user UUID', required: true, suggestion: 'userId' });
 
 const presets: Preset[] = [
+  { group: 'Admin settings', label: 'Read device restriction', method: 'GET', path: '/admin/settings/device-restriction' },
+  { group: 'Admin settings', label: 'Set device restriction', method: 'PATCH', path: '/admin/settings/device-restriction', body: [{ name: 'DEVICE_RESTRICTION_ENABLED', label: 'Restrict students to one device', type: 'select', required: true, booleanValue: true, options: [['false', 'Disabled'], ['true', 'Enabled']] }] },
   { group: 'Payment methods', label: 'List payment methods', method: 'GET', path: '/payment-methods', saveIdAs: 'paymentMethodId' },
   { group: 'Payment methods', label: 'Create payment method', method: 'POST', path: '/payment-methods', saveIdAs: 'paymentMethodId', body: [{ name: 'key', label: 'Key', required: true, placeholder: 'instapay' }, { name: 'value', label: 'Value', required: true, placeholder: 'your-account@instapay' }, { name: 'description', label: 'Description', type: 'textarea', required: true }] },
   { group: 'Payment methods', label: 'Edit payment method', method: 'PATCH', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()], body: [{ name: 'key', label: 'Key' }, { name: 'value', label: 'Value' }, { name: 'description', label: 'Description', type: 'textarea' }] },
   { group: 'Payment methods', label: 'Delete payment method', method: 'DELETE', path: '/payment-methods/:paymentMethodId', params: [paymentMethodId()] },
   { group: 'System and identity', label: 'Health check', method: 'GET', path: '/health' },
+  { group: 'System and identity', label: 'Reset account device', method: 'POST', path: '/admin/users/:userId/reset-device', params: [userId()] },
   { group: 'System and identity', label: 'Provision Firebase session', method: 'POST', path: '/auth/session' },
   { group: 'System and identity', label: 'Current user', method: 'GET', path: '/me', saveIdAs: 'userId' },
-  { group: 'Super-admin users', label: 'List users', method: 'GET', path: '/admin/users', saveIdAs: 'userId' },
+  { group: 'Super-admin users', label: 'List users', method: 'GET', path: '/admin/users', query: [page(), { ...pageSize(), help: '1–50; defaults to 20.' }], saveIdAs: 'userId' },
   { group: 'Super-admin users', label: 'Change user role', method: 'PATCH', path: '/admin/users/:userId/role', params: [userId()], body: [{ name: 'role', label: 'New role', type: 'select', required: true, options: [['ADMIN', 'Admin'], ['USER', 'User']] }] },
   { group: 'Modules', label: 'List modules', method: 'GET', path: '/modules', query: [page(), pageSize(), { name: 'number', label: 'Module number', placeholder: 'e.g. BIO-101' }, { name: 'academicYear', label: 'Academic year', placeholder: 'e.g. 2026' }, { name: 'semester', label: 'Semester', placeholder: 'e.g. Fall' }], saveIdAs: 'moduleId' },
   { group: 'Modules', label: 'Create module', method: 'POST', path: '/modules', saveIdAs: 'moduleId', body: [
@@ -291,6 +295,32 @@ function rememberResponse(preset: Preset, payload: unknown): void {
   updateSuggestions();
 }
 
+const deviceStorageKey = 'medly-device-id';
+const deviceUuid = localStorage.getItem(deviceStorageKey) ?? crypto.randomUUID();
+localStorage.setItem(deviceStorageKey, deviceUuid);
+const deviceRecoveryMessages: Record<string, string> = {
+  DEVICE_MISMATCH: 'Another device is registered. Sign out on that device or ask an administrator to reset it.',
+  REAUTHENTICATION_REQUIRED: 'Sign in again with your credentials, then provision the session. Refreshing the token is insufficient.',
+};
+
+async function protectedFetch(base: string, path: string, init: RequestInit, retry = true): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${await token()}`);
+  headers.set('X-Device-ID', deviceUuid);
+  const response = await fetch(`${base}${path}`, { ...init, headers });
+  if (response.status !== 401) return response;
+  const payload = await response.clone().json().catch(() => null);
+  const code = payload?.error?.code;
+  if (code === 'DEVICE_MISMATCH') {
+    await signOut(auth);
+  } else if (code === 'DEVICE_NOT_REGISTERED' && retry && path !== '/auth/session' && path !== '/auth/logout') {
+    const session = await protectedFetch(base, '/auth/session', { method: 'POST' }, false);
+    if (session.ok) return protectedFetch(base, path, init, false);
+    return session;
+  }
+  return response;
+}
+
 async function sendApiRequest(method: string, path: string, body?: BodyInit, _file?: File, preset?: Preset): Promise<unknown> {
   const started = performance.now();
   let entry: LogItem | undefined;
@@ -298,16 +328,19 @@ async function sendApiRequest(method: string, path: string, body?: BodyInit, _fi
     const base = apiBase();
     entry = addLog(`${method} ${path}`, `Sending request to ${base}${path}`, 'pending');
     const headers = new Headers();
-    if (path !== '/health') headers.set('Authorization', `Bearer ${await token()}`);
+
     if (body) {
       headers.set('Content-Type', 'application/json');
     }
-    const response = await fetch(`${base}${path}`, { method, headers, body });
+    const response = path === '/health'
+      ? await fetch(`${base}${path}`, { method, headers, body })
+      : await protectedFetch(base, path, { method, headers, body });
     const elapsed = Math.round(performance.now() - started);
     const contentType = response.headers.get('Content-Type') ?? '';
     if (contentType.includes('application/json')) {
       const payload = await response.json().catch(() => null);
-      show({ status: response.status, statusText: response.statusText, body: payload });
+      const message = response.status === 401 ? deviceRecoveryMessages[payload?.error?.code] : undefined;
+      show({ status: response.status, statusText: response.statusText, body: payload, ...(message ? { message } : {}) });
       if (response.ok) rememberResponse(preset ?? { group: '', label: '', method, path }, payload);
       updateLog(entry, response.ok ? 'success' : 'error', `${response.status} ${response.statusText || 'Response'} · ${elapsed} ms`);
       return payload;
@@ -463,6 +496,7 @@ function readField(field: Field, scope: string): unknown {
     if (field.required) throw new Error(`${field.label} is required.`);
     return undefined;
   }
+  if (field.booleanValue) return raw === 'true';
   if (field.type === 'number') {
     const value = Number(raw);
     if (!Number.isFinite(value)) throw new Error(`${field.label} must be a number.`);
@@ -564,8 +598,10 @@ document.querySelector<HTMLButtonElement>('#refresh-verification')!.addEventList
   show({ email: auth.currentUser.email, emailVerified: auth.currentUser.emailVerified });
 }));
 document.querySelector<HTMLButtonElement>('#sign-out')!.addEventListener('click', () => void runIdentity('Firebase sign-out', async () => {
+  let released = false;
+  try { released = (await protectedFetch(apiBase(), '/auth/logout', { method: 'POST' }, false)).ok; } catch { /* Report the unreleased registration below. */ }
   await signOut(auth);
-  show('Signed out.');
+  show(released ? 'Signed out and device registration released.' : 'Signed out of Firebase. Device registration may still require an administrator reset.');
 }));
 document.querySelector<HTMLButtonElement>('#provision-session')!.addEventListener('click', () => void sendApiRequest('POST', '/auth/session'));
 document.querySelector<HTMLButtonElement>('#get-me')!.addEventListener('click', () => void sendApiRequest('GET', '/me', undefined, undefined, { group: '', label: '', method: 'GET', path: '/me', saveIdAs: 'userId' }));

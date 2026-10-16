@@ -195,3 +195,14 @@ Apple sign-in requires active Apple Developer Program membership.
 - [Firebase: email/password authentication](https://firebase.google.com/docs/auth)
 - [Firebase: link multiple providers](https://firebase.google.com/docs/auth/web/account-linking)
 - [Firebase: Apple authentication for web](https://firebase.google.com/docs/auth/web/apple)
+
+## Optional student device restriction
+
+`DEVICE_RESTRICTION_ENABLED` is stored in D1 and defaults to disabled. When
+true, `USER` accounts must register one installation UUID through `/auth/session`
+and send it as `X-Device-ID` on protected requests. Both admin roles are always
+exempt. Admins and super admins manage the flag through
+`GET` / `PATCH /api/v1/admin/settings/device-restriction`.
+
+See the [device registration integration guide](integration/device-registration-update.md)
+for request examples, logout/reset, role changes, deletion retries, and rollout.

@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import type { Env } from 'hono';
 import { adminBookingFilters, bookingFilters } from './lib/booking-filters';
+import { paginationQuery } from './lib/pagination';
 import {
   authSessionInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
   lecturePatch, mcqIdParam, mcqInput, mcqPatch, moduleIdParam, moduleInput,
@@ -56,6 +57,19 @@ const key = (method: string, path: string) => {
   return `${method.toLowerCase()}:${normalized}`;
 };
 const add = (route: Record<string, unknown>) => {
+  if (route.security) {
+    route.description = `${route.description ?? ''} X-Device-ID (persistent UUID v4) is required only for USER accounts while the database DEVICE_RESTRICTION_ENABLED flag is true. ADMIN and SUPER_ADMIN accounts are exempt.`.trim();
+    route.request = { ...(route.request as object), headers: z.object({
+      'X-Device-ID': z.string().optional().describe('Persistent installation UUID v4; required for USER accounts only when device restriction is enabled'),
+    }) };
+    route.responses = { ...(route.responses as object),
+      422: { description: 'Invalid input or missing/malformed device ID when required', content: { 'application/json': { schema: error } } },
+      401: { description: 'Invalid authentication, DEVICE_NOT_REGISTERED, DEVICE_MISMATCH, or REAUTHENTICATION_REQUIRED', content: { 'application/json': { schema: error } } },
+      403: { description: 'Insufficient permissions', content: { 'application/json': { schema: error } } },
+      404: { description: 'Resource not found', content: { 'application/json': { schema: error } } },
+      409: { description: 'Account deletion or resource conflict', content: { 'application/json': { schema: error } } },
+    };
+  }
   const definition = operation(route);
   definitions.set(key(route.method as string, route.path as string), definition);
   return definition;
@@ -95,6 +109,11 @@ export class ApiRouter<E extends Env = Env> extends OpenAPIHono<E> {
 
 add({ method: 'get', path: '/health', tags: ['System'], summary: 'Health check', responses: { 200: { description: 'Worker is healthy', content: { 'application/json': { schema: envelope(z.object({ status: z.literal('ok') })) } } } } });
 secured('post', '/auth/session', ['Authentication'], 'Create or link the authenticated Firebase user', envelope(z.object({ user, created: z.boolean(), email_verified: z.literal(true) })), { body: { required: false, content: { 'application/json': { schema: authSessionInput.openapi('SessionInput') } } } });
+noContent('post', '/auth/logout', ['Authentication'], 'Release the matching student device before Firebase sign-out');
+noContent('post', '/admin/users/{userId}/reset-device', ['Admin'], 'Reset a USER device (admin)', { params: z.object({ userId: uuid }) });
+const deviceSetting = z.object({ DEVICE_RESTRICTION_ENABLED: z.boolean() }).strict();
+secured('get', '/admin/settings/device-restriction', ['Admin'], 'Read device restriction setting (admin)', envelope(deviceSetting));
+secured('patch', '/admin/settings/device-restriction', ['Admin'], 'Enable or disable student device restriction (admin)', envelope(deviceSetting), { body: { content: { 'application/json': { schema: deviceSetting } } } });
 secured('get', '/me', ['Authentication'], 'Get the current local user', envelope(user));
 secured('patch', '/me', ['Authentication'], 'Update the current user’s display name', envelope(user), { body: { content: { 'application/json': { schema: profileUpdateInput.openapi('ProfileUpdateInput') } } } });
 
@@ -141,7 +160,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
     { query: adminBookingFilters });
   secured('patch', '/admin/bookings/{bookingId}', ['Admin'], 'Accept or reject a booking (admin)', envelope(booking), { params: z.object({ bookingId: uuid }), body: { content: { 'application/json': { schema: z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) }) } } } });
   add({ method: 'get', path: '/admin/bookings/{bookingId}/receipt', tags: ['Admin'], summary: 'Redirect to a short-lived signed R2 receipt download URL (admin)', security: auth, request: { params: z.object({ bookingId: uuid }) }, responses: { 302: { description: 'Redirect to signed R2 GET URL' }, 401: { description: 'Missing or invalid Firebase ID token', content: { 'application/json': { schema: error } } } } });
-  secured('get', '/admin/users', ['Admin'], 'List users (super admin)', envelope(z.array(user)));
+  secured('get', '/admin/users', ['Admin'], 'List users (super admin)', paginated(user.extend({ createdAt: dateTime, updatedAt: dateTime })), { query: paginationQuery });
   secured('patch', '/admin/users/{userId}/role', ['Admin'], 'Change a user role (super admin)', envelope(user), { params: z.object({ userId: uuid }), body: { content: { 'application/json': { schema: z.object({ role: z.enum(['USER', 'ADMIN']) }) } } } });
 
   secured('get', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'List lecture flashcards', envelope(z.array(flashcard)), { params: lectureIdParam });

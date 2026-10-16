@@ -3,6 +3,8 @@ import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
 import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
 import paymentMethodsMigration from '../drizzle/0004_payment_methods.sql?raw';
+import deviceMigration from '../drizzle/0006_device_restriction.sql?raw';
+import { releaseDevice } from '../src/lib/devices';
 import nullableVideoMigration from '../drizzle/0005_cloudy_true_believers.sql?raw';
 import { processAccountDeletion, retryAccountDeletions, requestAccountDeletion } from '../src/lib/account-deletion';
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -133,6 +135,8 @@ beforeAll(async () => {
   const afterVideoMigration = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
   expect(afterVideoMigration.map((result) => result.results)).toEqual(beforeVideoMigration.map((result) => result.results));
   expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+  await env.DB.batch(deviceMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  expect(await env.DB.prepare("SELECT enabled FROM app_settings WHERE key = 'DEVICE_RESTRICTION_ENABLED'").first()).toEqual({ enabled: 0 });
 
 });
 
@@ -145,6 +149,7 @@ beforeEach(async () => {
   await env.DB.batch([
     'payment_methods', 'account_deletion_jobs', 'user_flashcard_state', 'mcq_choices', 'mcqs', 'flashcards', 'lecture_materials', 'uploads', 'module_access', 'booking_requests', 'lectures', 'modules', 'users',
   ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
+  await env.DB.prepare("UPDATE app_settings SET enabled = 0 WHERE key = 'DEVICE_RESTRICTION_ENABLED'").run();
   await seed();
   authTokens = new Map(await Promise.all([...seedSubjects.entries()].map(async ([id, subject]) => [
     id,
@@ -438,6 +443,37 @@ describe('Medly API', () => {
     expect(await (await request('/api/v1/subjects?academicYear=2025&semester=Fall', { headers: auth(userId) })).json())
       .toEqual({ data: ['Physiology'] });
   });
+
+  it('paginates users with a total count and stable ordering for tied timestamps', async () => {
+    await env.DB.prepare('UPDATE users SET created_at = ?').bind(1_000).run();
+    await env.DB.prepare('UPDATE users SET created_at = ? WHERE id = ?').bind(2_000, userId).run();
+    const list = async (query = '') => {
+      const response = await request(`/api/v1/admin/users${query}`, { headers: auth(superAdminId) });
+      expect(response.status).toBe(200);
+      return response.json<{ data: { id: string }[]; meta: Record<string, number> }>();
+    };
+
+    const defaults = await list();
+    expect(defaults.meta).toEqual({ page: 1, pageSize: 20, limit: 20, offset: 0, total: 4 });
+    expect(defaults.data.map((user) => user.id)).toEqual([userId, superAdminId, adminId, secondUserId]);
+    const first = await list('?page=1&pageSize=2');
+    const second = await list('?page=2&pageSize=2');
+    expect(first.data.map((user) => user.id)).toEqual([userId, superAdminId]);
+    expect(second.data.map((user) => user.id)).toEqual([adminId, secondUserId]);
+    expect(second.meta).toEqual({ page: 2, pageSize: 2, limit: 2, offset: 2, total: 4 });
+    expect(await list('?page=3&pageSize=2')).toEqual({
+      data: [], meta: { page: 3, pageSize: 2, limit: 2, offset: 4, total: 4 },
+    });
+    expect((await list('?pageSize=50')).data).toHaveLength(4);
+  });
+
+  it.each(['page=0', 'page=-1', 'page=1.5', 'page=abc', 'pageSize=0', 'pageSize=51', 'pageSize=1.5', 'pageSize=abc'])(
+    'rejects invalid user pagination: %s', async (query) => {
+      const response = await request(`/api/v1/admin/users?${query}`, { headers: auth(superAdminId) });
+      expect(response.status).toBe(422);
+      await response.body?.cancel();
+    },
+  );
 
   it('lets only a super admin manage operational admin roles', async () => {
     expect((await request('/api/v1/admin/users', { headers: auth(adminId) })).status).toBe(403);
@@ -1082,4 +1118,237 @@ describe('Medly API', () => {
     })).status).toBe(201);
   });
 
+});
+
+describe('optional student device restriction', () => {
+  const deviceA = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const deviceB = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const settingsPath = '/api/v1/admin/settings/device-restriction';
+  const call = (path: string, method = 'GET', actor = userId, device?: string) => request(`/api/v1${path}`, {
+    method, headers: { ...auth(actor), ...(device === undefined ? {} : { 'X-Device-ID': device }) },
+  });
+  const toggle = async (enabled: boolean) => {
+    const response = await json(settingsPath, 'PATCH', { DEVICE_RESTRICTION_ENABLED: enabled }, superAdminId);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: { DEVICE_RESTRICTION_ENABLED: enabled } });
+  };
+  const code = async (response: Response, status: number, value: string) => {
+    expect(response.status).toBe(status);
+    const body = await response.text();
+    expect(JSON.parse(body)).toMatchObject({ error: { code: value } });
+    expect(body).not.toContain(deviceA);
+    expect(body).not.toContain(deviceB);
+  };
+
+  it('defaults to off, permits old clients, and restricts setting management to admins', async () => {
+    expect(await (await request(settingsPath, { headers: auth(superAdminId) })).json())
+      .toEqual({ data: { DEVICE_RESTRICTION_ENABLED: false } });
+    for (const actor of [userId]) {
+      expect((await request(settingsPath, { headers: auth(actor) })).status).toBe(403);
+      expect((await json(settingsPath, 'PATCH', { DEVICE_RESTRICTION_ENABLED: true }, actor)).status).toBe(403);
+    }
+    for (const device of [undefined, 'invalid', deviceA, deviceB]) {
+      expect((await call('/auth/session', 'POST', userId, device)).status).toBe(200);
+      expect((await call('/me', 'GET', userId, device)).status).toBe(200);
+      expect((await call('/auth/logout', 'POST', userId, device)).status).toBe(204);
+    }
+    expect(await env.DB.prepare('SELECT device FROM users WHERE id = ?').bind(userId).first()).toEqual({ device: null });
+    expect((await request(settingsPath)).status).toBe(401);
+    for (const value of ['true', 1, null]) {
+      expect((await json(settingsPath, 'PATCH', { DEVICE_RESTRICTION_ENABLED: value }, superAdminId)).status).toBe(422);
+    }
+    expect((await json(settingsPath, 'PATCH', {}, superAdminId)).status).toBe(422);
+  });
+
+  it.each([adminId, superAdminId])('allows privileged account %s to read, enable, and disable the flag without a device header', async (actor) => {
+    for (const enabled of [true, false]) {
+      const update = await json(settingsPath, 'PATCH', { DEVICE_RESTRICTION_ENABLED: enabled }, actor);
+      expect(update.status).toBe(200);
+      expect(await update.json()).toEqual({ data: { DEVICE_RESTRICTION_ENABLED: enabled } });
+      const read = await request(settingsPath, { headers: auth(actor) });
+      expect(read.status).toBe(200);
+      expect(await read.json()).toEqual({ data: { DEVICE_RESTRICTION_ENABLED: enabled } });
+      expect((await call('/me', 'GET', userId, deviceA)).status).toBe(enabled ? 401 : 200);
+    }
+  });
+
+  it('defaults a missing flag row to disabled and recreates it when updated', async () => {
+    await env.DB.prepare('DELETE FROM app_settings').run();
+    expect((await call('/me')).status).toBe(200);
+    await toggle(true);
+    await code(await call('/me', 'GET', userId, deviceA), 401, 'DEVICE_NOT_REGISTERED');
+    await toggle(false);
+  });
+
+  it.each([adminId, superAdminId])('allows unlimited devices for privileged account %s even when enabled', async (actor) => {
+    await toggle(true);
+    // Even a stale pre-exemption device registration must not lock out admins.
+    await env.DB.prepare('UPDATE users SET device = ? WHERE id = ?').bind(deviceA, actor).run();
+    for (const device of [undefined, 'invalid', deviceA, deviceB]) {
+      expect((await call('/auth/session', 'POST', actor, device)).status).toBe(200);
+      expect((await call('/me', 'GET', actor, device)).status).toBe(200);
+      expect((await call('/auth/logout', 'POST', actor, device)).status).toBe(204);
+    }
+    expect(await env.DB.prepare('SELECT device FROM users WHERE id = ?').bind(actor).first()).toEqual({ device: deviceA });
+    expect((await call('/me', 'DELETE', actor)).status).toBe(202);
+    expect((await call('/me', 'DELETE', actor, deviceB)).status).toBe(202);
+  });
+
+  it('validates and registers students, rejects other devices, and preserves registration across toggles', async () => {
+    await toggle(true);
+    for (const device of [undefined, '', 'invalid', '11111111-1111-1111-8111-111111111111']) {
+      for (const [path, method] of [['/auth/session', 'POST'], ['/me', 'GET'], ['/me', 'DELETE'], ['/auth/logout', 'POST']]) {
+        await code(await call(path!, method, userId, device), 422, 'VALIDATION_ERROR');
+      }
+    }
+    await code(await call('/me', 'GET', userId, deviceA), 401, 'DEVICE_NOT_REGISTERED');
+    expect((await call('/auth/session', 'POST', userId, deviceA.toUpperCase())).status).toBe(200);
+    expect((await call('/auth/session', 'POST', userId, deviceA)).status).toBe(200);
+    expect((await call('/me', 'GET', userId, deviceA)).status).toBe(200);
+    await code(await call('/auth/session', 'POST', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    await code(await call('/me', 'GET', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    await code(await call('/auth/logout', 'POST', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    await toggle(false);
+    expect((await call('/me', 'GET', userId, deviceB)).status).toBe(200);
+    expect((await call('/auth/session', 'POST', userId, deviceB)).status).toBe(200);
+    await toggle(true);
+    await code(await call('/me', 'GET', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    expect((await call('/me', 'GET', userId, deviceA)).status).toBe(200);
+  });
+
+  it.each([false, true])('rejects invalid device input before provisioning or linking (legacy: %s)', async (legacy) => {
+    await toggle(true);
+    const email = 'firebase.student@example.test';
+    const subject = 'device-validation-user';
+    if (legacy) {
+      await env.DB.prepare('UPDATE users SET external_subject = NULL, email = ? WHERE id = ?').bind(email, userId).run();
+    }
+    const before = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+    const token = await firebaseToken({}, {}, { subject });
+    for (const device of [undefined, 'invalid']) {
+      const response = await request('/api/v1/auth/session', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, ...(device === undefined ? {} : { 'X-Device-ID': device }) },
+      });
+      await code(response, 422, 'VALIDATION_ERROR');
+      expect(await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()).toEqual(before);
+      expect(await env.DB.prepare('SELECT id FROM users WHERE external_subject = ?').bind(subject).first()).toBeNull();
+    }
+    const response = await request('/api/v1/auth/session', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Device-ID': deviceA },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { created: !legacy } });
+    expect(await env.DB.prepare('SELECT device FROM users WHERE external_subject = ?').bind(subject).first()).toEqual({ device: deviceA });
+  });
+
+  it.each([adminId, superAdminId])('links privileged legacy account %s without a device header', async (actor) => {
+    await toggle(true);
+    const email = `${actor}@example.test`;
+    await env.DB.prepare('UPDATE users SET external_subject = NULL, email = ? WHERE id = ?').bind(email, actor).run();
+    const token = await firebaseToken({ email }, {}, { subject: `legacy-${actor}` });
+    const response = await request('/api/v1/auth/session', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { user: { id: actor }, created: false } });
+  });
+
+  it('allows only one concurrent first registration for a newly provisioned account', async () => {
+    await toggle(true);
+    const token = await firebaseToken({}, {}, { subject: 'device-race-user' });
+    const responses = await Promise.all([deviceA, deviceB].map((device) => request('/api/v1/auth/session', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Device-ID': device },
+    })));
+    expect(responses.map((r) => r.status).sort()).toEqual([200, 401]);
+    const winner = responses[0]!.status === 200 ? deviceA : deviceB;
+    expect(await env.DB.prepare('SELECT device FROM users WHERE external_subject = ?').bind('device-race-user').first()).toEqual({ device: winner });
+  });
+
+  it('requires a later Firebase sign-in after logout and reset, and protects a new device from delayed logout', async () => {
+    await toggle(true);
+    expect((await call('/auth/session', 'POST', userId, deviceA)).status).toBe(200);
+    expect((await call('/auth/logout', 'POST', userId, deviceA)).status).toBe(204);
+    await code(await call('/auth/session', 'POST', userId, deviceA), 401, 'REAUTHENTICATION_REQUIRED');
+    authTokens.set(userId, await firebaseToken({ auth_time: Math.floor(Date.now() / 1000) - 30 }, {}, { subject: 'seed-student' }));
+    await code(await call('/auth/session', 'POST', userId, deviceB), 401, 'REAUTHENTICATION_REQUIRED');
+    // Represent a later interactive sign-in without depending on wall-clock sleeps.
+    await env.DB.prepare('UPDATE users SET device_released_at = ? WHERE id = ?').bind(Date.now() - 60_000, userId).run();
+    expect((await call('/auth/session', 'POST', userId, deviceB)).status).toBe(200);
+    expect((await call(`/admin/users/${userId}/reset-device`, 'POST', adminId)).status).toBe(204);
+    await code(await call('/me', 'GET', userId, deviceB), 401, 'DEVICE_NOT_REGISTERED');
+    await code(await call('/auth/session', 'POST', userId, deviceB), 401, 'REAUTHENTICATION_REQUIRED');
+    await env.DB.prepare('UPDATE users SET device_released_at = ? WHERE id = ?').bind(Date.now() - 60_000, userId).run();
+    expect((await call('/auth/session', 'POST', userId, deviceA)).status).toBe(200);
+    await releaseDevice(env, userId, deviceB);
+    expect((await call('/me', 'GET', userId, deviceA)).status).toBe(200);
+  });
+
+  it('permits resets only by admins and only for students, preserving super-admin-only user management', async () => {
+    await code(await call(`/admin/users/${userId}/reset-device`, 'POST', userId), 403, 'FORBIDDEN');
+    for (const actor of [adminId, superAdminId]) {
+      expect((await call(`/admin/users/${userId}/reset-device`, 'POST', actor)).status).toBe(204);
+      for (const target of [adminId, superAdminId]) {
+        await code(await call(`/admin/users/${target}/reset-device`, 'POST', actor), 403, 'FORBIDDEN');
+      }
+      await code(await call(`/admin/users/${crypto.randomUUID()}/reset-device`, 'POST', actor), 404, 'NOT_FOUND');
+    }
+    expect((await call('/admin/users', 'GET', adminId)).status).toBe(403);
+    expect((await json(`/api/v1/admin/users/${userId}/role`, 'PATCH', { role: 'ADMIN' }, adminId)).status).toBe(403);
+  });
+
+  it('clears device state on role changes and enforces registration after demotion', async () => {
+    await toggle(true);
+    expect((await call('/auth/session', 'POST', userId, deviceA)).status).toBe(200);
+    const path = `/api/v1/admin/users/${userId}/role`;
+    const promote = await json(path, 'PATCH', { role: 'ADMIN' }, superAdminId);
+    expect(promote.status).toBe(200);
+    expect(await promote.text()).not.toContain('device');
+    expect((await call('/me', 'GET', userId, deviceB)).status).toBe(200);
+    expect(await env.DB.prepare('SELECT device FROM users WHERE id = ?').bind(userId).first()).toEqual({ device: null });
+    expect((await json(path, 'PATCH', { role: 'USER' }, superAdminId)).status).toBe(200);
+    await code(await call('/me', 'GET', userId, deviceB), 401, 'DEVICE_NOT_REGISTERED');
+    await code(await call('/auth/session', 'POST', userId, deviceB), 401, 'REAUTHENTICATION_REQUIRED');
+    await env.DB.prepare('UPDATE users SET device_released_at = ? WHERE id = ?').bind(Date.now() - 10_000, userId).run();
+    expect((await call('/auth/session', 'POST', userId, deviceB)).status).toBe(200);
+    expect((await json(path, 'PATCH', { role: 'USER' }, superAdminId)).status).toBe(200);
+    expect((await call('/me', 'GET', userId, deviceB)).status).toBe(200);
+  });
+
+  it('guards deletion and its retries with the registered device only while enabled', async () => {
+    await toggle(true);
+    expect((await call('/auth/session', 'POST', userId, deviceA)).status).toBe(200);
+    await code(await call('/me', 'DELETE', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    expect((await call('/me', 'DELETE', userId, deviceA)).status).toBe(202);
+    await code(await call(`/admin/users/${userId}/reset-device`, 'POST', adminId), 409, 'CONFLICT');
+    const job = await env.DB.prepare('SELECT device_hash FROM account_deletion_jobs WHERE firebase_uid = ?').bind('seed-student').first<{ device_hash: string }>();
+    expect(job?.device_hash).toMatch(/^[a-f0-9]{64}$/);
+    await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+    expect((await call('/me', 'DELETE', userId, deviceA)).status).toBe(202);
+    await code(await call('/me', 'DELETE', userId, deviceB), 401, 'DEVICE_MISMATCH');
+    await toggle(false);
+    expect((await call('/me', 'DELETE')).status).toBe(202);
+    await toggle(true);
+    await code(await call('/me', 'DELETE'), 422, 'VALIDATION_ERROR');
+  });
+
+  it('keeps deletion requests accepted while disabled retryable after enabling', async () => {
+    expect((await call('/me', 'DELETE')).status).toBe(202);
+    await toggle(true);
+    expect((await call('/me', 'DELETE')).status).toBe(202);
+  });
+
+  it('omits device data in responses and allows browser device headers', async () => {
+    await toggle(true);
+    for (const response of [await call('/auth/session', 'POST', userId, deviceA),
+      await call('/me', 'GET', userId, deviceA), await call('/admin/users', 'GET', superAdminId)]) {
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).not.toContain('device');
+      expect(body).not.toContain(deviceA);
+    }
+    const preflight = await request('/api/v1/me', { method: 'OPTIONS', headers: { Origin: 'https://client.test',
+      'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization,x-device-id' } });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toContain('x-device-id');
+  });
 });

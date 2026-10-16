@@ -1,4 +1,7 @@
 import type { FirebaseIdentity } from '../middleware/auth';
+import { checkDevice, deviceId, hashDevice, restrictDevice } from './devices';
+import { deviceRestrictionEnabled } from './settings';
+import type { Role } from '../types';
 import { ApiError, unauthorized } from './errors';
 import { deleteFirebaseUser, requireFirebaseDeletionConfig } from './firebase-admin';
 
@@ -8,6 +11,7 @@ const LEASE_MS = 5 * 60 * 1_000;
 
 type DeletionJob = {
   firebase_uid: string;
+  device_hash: string | null;
   user_id: string;
   requested_at: number;
   firebase_deleted_at: number | null;
@@ -16,11 +20,25 @@ type DeletionJob = {
   next_attempt_at: number;
 };
 
-export async function requestAccountDeletion(env: Env, identity: FirebaseIdentity): Promise<DeletionJob> {
+export async function requestAccountDeletion(env: Env, identity: FirebaseIdentity, presented?: string): Promise<DeletionJob> {
   const existing = await env.DB.prepare('SELECT * FROM account_deletion_jobs WHERE firebase_uid = ?')
     .bind(identity.subject).first<DeletionJob>();
   // Retries only acknowledge the same UID's already accepted request.
-  if (existing) return existing;
+  if (existing) {
+    // A null hash means the request was accepted without device enforcement
+    // (an admin, a disabled flag, or a pre-feature deletion job).
+    if (existing.device_hash && await deviceRestrictionEnabled(env)) {
+      checkDevice(existing.device_hash, await hashDevice(deviceId(presented)));
+    }
+    return existing;
+  }
+  const user = await env.DB.prepare('SELECT role, device FROM users WHERE external_subject = ?').bind(identity.subject)
+    .first<{ role: Role; device: string | null }>();
+  if (!user) throw unauthorized('No local account is linked to this Firebase identity');
+  const restricted = await restrictDevice(env, user.role);
+  const uuid = restricted ? deviceId(presented) : null;
+  if (uuid) checkDevice(user.device, uuid);
+  const deviceHash = uuid ? await hashDevice(uuid) : null;
   if (Math.floor(Date.now() / 1_000) - identity.authTime > RECENT_SIGN_IN_SECONDS) {
     throw new ApiError(401, 'REAUTHENTICATION_REQUIRED', 'Sign in again before deleting your account');
   }
@@ -28,9 +46,10 @@ export async function requestAccountDeletion(env: Env, identity: FirebaseIdentit
   const now = Date.now();
   // Atomic acceptance: no marked account without a durable retry record.
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO account_deletion_jobs (firebase_uid, user_id, requested_at, next_attempt_at)
-      SELECT external_subject, id, ?, ? FROM users WHERE external_subject = ?
-      ON CONFLICT(firebase_uid) DO NOTHING`).bind(now, now, identity.subject),
+    env.DB.prepare(`INSERT INTO account_deletion_jobs (firebase_uid, user_id, requested_at, next_attempt_at, device_hash)
+      SELECT external_subject, id, ?, ?, ? FROM users WHERE external_subject = ?
+      AND deletion_requested_at IS NULL AND (? IS NULL OR device = ?)
+      ON CONFLICT(firebase_uid) DO NOTHING`).bind(now, now, deviceHash, identity.subject, uuid, uuid),
     env.DB.prepare(`UPDATE users SET deletion_requested_at = COALESCE(deletion_requested_at, ?), updated_at = ?
       WHERE external_subject = ? AND EXISTS (SELECT 1 FROM account_deletion_jobs WHERE firebase_uid = ?)`)
       .bind(now, now, identity.subject, identity.subject),
@@ -38,6 +57,9 @@ export async function requestAccountDeletion(env: Env, identity: FirebaseIdentit
   const job = await env.DB.prepare('SELECT * FROM account_deletion_jobs WHERE firebase_uid = ?')
     .bind(identity.subject).first<DeletionJob>();
   if (!job) throw unauthorized('No local account is linked to this Firebase identity');
+  if (job.device_hash && await deviceRestrictionEnabled(env)) {
+    checkDevice(job.device_hash, await hashDevice(deviceId(presented)));
+  }
   return job;
 }
 

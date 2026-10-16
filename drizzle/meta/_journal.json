@@ -43,6 +43,13 @@
       "when": 1792101502212,
       "tag": "0005_cloudy_true_believers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792162660768,
+      "tag": "0006_device_restriction",
+      "breakpoints": true
     }
   ]
 }

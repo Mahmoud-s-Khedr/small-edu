@@ -238,9 +238,14 @@ remove another super admin through the API.
 ### `GET /admin/users`
 
 Lists local users for the super-admin management screen.
+Accepts `page` (default 1, minimum 1) and `pageSize` (default 20, range 1–50).
+Users are ordered by creation time descending, then user ID descending.
 
 ```ts
-type Response = Success<User[]>;
+type Response = {
+  data: (User & { createdAt: string; updatedAt: string })[];
+  meta: { page: number; pageSize: number; limit: number; offset: number; total: number };
+};
 ```
 
 ### `PATCH /admin/users/:userId/role`
@@ -887,3 +892,19 @@ type Response = Success<{ correct: boolean; correctChoiceId: string }>;
   URLs expire after 10 minutes and must be treated as bearer tokens.
 - The API accepts dates through JavaScript date coercion. ISO 8601 UTC strings
   are the portable client format.
+
+## Optional student device restriction
+
+`DEVICE_RESTRICTION_ENABLED` is stored in D1 and defaults to `false`. When
+true, only `USER` accounts need a registered UUID v4 in `X-Device-ID`.
+`ADMIN` and `SUPER_ADMIN` have unlimited devices.
+
+| Method | Path (under `/api/v1`) | Access |
+| --- | --- | --- |
+| GET | `/admin/settings/device-restriction` | Admin or super admin |
+| PATCH | `/admin/settings/device-restriction` | Admin or super admin; body: `{ "DEVICE_RESTRICTION_ENABLED": true }` (or `false`) |
+| POST | `/auth/logout` | Authenticated; releases matching student device |
+| POST | `/admin/users/:userId/reset-device` | Admin or super admin; targets `USER` only |
+
+See the [device registration guide](docs/integration/device-registration-update.md)
+for client integration, errors, and rollout.

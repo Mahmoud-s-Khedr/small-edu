@@ -142,12 +142,27 @@ See [the account deletion runbook](../account-deletion.md).
 
 **Authentication:** local `SUPER_ADMIN` role required.
 
-**Request DTO:** none.
+**Query DTO:**
+
+```ts
+type Query = {
+  page?: number; // Default 1, minimum 1
+  pageSize?: number; // Default 20, range 1–50
+};
+```
+
+Example: `GET /admin/users?page=2&pageSize=20`.
+Users are ordered newest first, with descending user ID breaking timestamp ties.
+Invalid pagination returns `422`. Pages beyond the last page return an empty
+`data` array and the total count.
 
 **Expected response — `200 OK`**
 
 ```ts
-type Response = Success<AdminUser[]>;
+type Response = {
+  data: AdminUser[];
+  meta: { page: number; pageSize: number; limit: number; offset: number; total: number };
+};
 ```
 
 ## `PATCH /admin/users/:userId/role` — Super admin only
@@ -177,3 +192,11 @@ type Response = Success<UpdatedAdminUser>;
 `SUPER_ADMIN` cannot be granted, changed, or removed through this endpoint; it
 is controlled by deployment-time administration. Trying to modify a super
 admin returns `409 CONFLICT`.
+
+## Optional device enforcement
+
+The D1 flag `DEVICE_RESTRICTION_ENABLED` defaults to disabled. When enabled,
+only `USER` accounts require a persistent UUID v4 in `X-Device-ID` and registration
+through `/auth/session`. `ADMIN` and `SUPER_ADMIN` always support unlimited
+devices. See [device registration](device-registration-update.md) for the
+admin setting endpoint, client changes, logout, and reset behavior.
