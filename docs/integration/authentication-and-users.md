@@ -136,11 +136,11 @@ signing up with the same email produces a new UID/local account with `USER` role
 Payment receipts and bookings remain separate; previous access/progress is lost.
 See [the account deletion runbook](../account-deletion.md).
 
-## `GET /admin/users` — Super admin only
+## `GET /admin/users` — Admin or super admin
 
-**Job:** lists local users for the super-admin role-management screen.
+**Job:** lists local users for admin user-management screens.
 
-**Authentication:** local `SUPER_ADMIN` role required.
+**Authentication:** local `ADMIN` or `SUPER_ADMIN` role required.
 
 **Query DTO:**
 

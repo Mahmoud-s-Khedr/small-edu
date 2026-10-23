@@ -229,15 +229,16 @@ Returns the authenticated local user.
 type Response = Success<User>;
 ```
 
-## Super-admin user management
+## User management
 
-These routes require a local user with `role: "SUPER_ADMIN"`. A super admin can
+Listing users requires a local `ADMIN` or `SUPER_ADMIN` role. Changing roles
+requires `SUPER_ADMIN`. A super admin can
 grant or revoke the operational `ADMIN` role, but cannot create, change, or
 remove another super admin through the API.
 
 ### `GET /admin/users`
 
-Lists local users for the super-admin management screen.
+Lists local users for admin user-management screens.
 Accepts `page` (default 1, minimum 1) and `pageSize` (default 20, range 1–50).
 Users are ordered by creation time descending, then user ID descending.
 

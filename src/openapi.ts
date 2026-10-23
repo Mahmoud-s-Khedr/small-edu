@@ -160,7 +160,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
     { query: adminBookingFilters });
   secured('patch', '/admin/bookings/{bookingId}', ['Admin'], 'Accept or reject a booking (admin)', envelope(booking), { params: z.object({ bookingId: uuid }), body: { content: { 'application/json': { schema: z.object({ status: z.enum(['ACCEPTED', 'REJECTED']) }) } } } });
   add({ method: 'get', path: '/admin/bookings/{bookingId}/receipt', tags: ['Admin'], summary: 'Redirect to a short-lived signed R2 receipt download URL (admin)', security: auth, request: { params: z.object({ bookingId: uuid }) }, responses: { 302: { description: 'Redirect to signed R2 GET URL' }, 401: { description: 'Missing or invalid Firebase ID token', content: { 'application/json': { schema: error } } } } });
-  secured('get', '/admin/users', ['Admin'], 'List users (super admin)', paginated(user.extend({ createdAt: dateTime, updatedAt: dateTime })), { query: paginationQuery });
+  secured('get', '/admin/users', ['Admin'], 'List users (admin)', paginated(user.extend({ createdAt: dateTime, updatedAt: dateTime })), { query: paginationQuery });
   secured('patch', '/admin/users/{userId}/role', ['Admin'], 'Change a user role (super admin)', envelope(user), { params: z.object({ userId: uuid }), body: { content: { 'application/json': { schema: z.object({ role: z.enum(['USER', 'ADMIN']) }) } } } });
 
   secured('get', '/lectures/{lectureId}/flashcards', ['Flashcards'], 'List lecture flashcards', envelope(z.array(flashcard)), { params: lectureIdParam });

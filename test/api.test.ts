@@ -475,8 +475,20 @@ describe('Medly API', () => {
     },
   );
 
+  it('lets admins and super admins list users while rejecting students and unauthenticated callers', async () => {
+    expect((await request('/api/v1/admin/users')).status).toBe(401);
+    expect((await request('/api/v1/admin/users', { headers: auth(userId) })).status).toBe(403);
+    for (const actor of [adminId, superAdminId]) {
+      const response = await request('/api/v1/admin/users?page=1&pageSize=2', { headers: auth(actor) });
+      expect(response.status).toBe(200);
+      const body = await response.json<{ data: { id: string }[]; meta: Record<string, number> }>();
+      expect(body.data).toHaveLength(2);
+      expect(body.meta).toEqual({ page: 1, pageSize: 2, limit: 2, offset: 0, total: 4 });
+    }
+  });
+
   it('lets only a super admin manage operational admin roles', async () => {
-    expect((await request('/api/v1/admin/users', { headers: auth(adminId) })).status).toBe(403);
+    expect((await json(`/api/v1/admin/users/${userId}/role`, 'PATCH', { role: 'ADMIN' }, adminId)).status).toBe(403);
 
     const listed = await request('/api/v1/admin/users', { headers: auth(superAdminId) });
     expect(listed.status).toBe(200);
@@ -1283,7 +1295,7 @@ describe('optional student device restriction', () => {
     expect((await call('/me', 'GET', userId, deviceA)).status).toBe(200);
   });
 
-  it('permits resets only by admins and only for students, preserving super-admin-only user management', async () => {
+  it('permits resets only by admins and only for students, preserving super-admin-only role changes', async () => {
     await code(await call(`/admin/users/${userId}/reset-device`, 'POST', userId), 403, 'FORBIDDEN');
     for (const actor of [adminId, superAdminId]) {
       expect((await call(`/admin/users/${userId}/reset-device`, 'POST', actor)).status).toBe(204);
@@ -1292,7 +1304,7 @@ describe('optional student device restriction', () => {
       }
       await code(await call(`/admin/users/${crypto.randomUUID()}/reset-device`, 'POST', actor), 404, 'NOT_FOUND');
     }
-    expect((await call('/admin/users', 'GET', adminId)).status).toBe(403);
+    expect((await call('/admin/users', 'GET', adminId)).status).toBe(200);
     expect((await json(`/api/v1/admin/users/${userId}/role`, 'PATCH', { role: 'ADMIN' }, adminId)).status).toBe(403);
   });
 

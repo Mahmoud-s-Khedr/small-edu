@@ -16,7 +16,7 @@ const roleInput = z.object({ role: z.enum(['USER', 'ADMIN']) });
 export const adminUserRoutes = new ApiRouter<AppBindings>('/admin/users');
 adminUserRoutes.use('*', requireAuth, requireAdmin);
 
-adminUserRoutes.get('/', requireSuperAdmin, async (c) => {
+adminUserRoutes.get('/', async (c) => {
   const p = pagination(paginationQuery.parse(c.req.query()));
   const database = db(c.env.DB);
   const [items, totalRow] = await Promise.all([
