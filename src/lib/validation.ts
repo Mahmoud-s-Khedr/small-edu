@@ -24,7 +24,10 @@ export const profileUpdateInput = z.object({
   name: z.string().trim().min(1).max(100),
 });
 
+export const facultyNameInput = z.string().trim().min(1).max(256);
+
 export const moduleInput = z.object({
+  facultyName: facultyNameInput,
   title: z.string().trim().min(1).max(200),
   number: z.string().trim().min(1).max(50),
   academicYear: z.string().trim().min(1).max(30),

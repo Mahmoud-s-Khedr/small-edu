@@ -3,7 +3,7 @@ import type { Env } from 'hono';
 import { adminBookingFilters, bookingFilters } from './lib/booking-filters';
 import { paginationQuery } from './lib/pagination';
 import {
-  authSessionInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
+  authSessionInput, facultyNameInput, flashcardIdParam, flashcardInput, flashcardPatch, lectureIdParam, lectureInput,
   lecturePatch, mcqIdParam, mcqInput, mcqPatch, moduleIdParam, moduleInput,
   modulePatch, profileUpdateInput,
   paymentMethodIdParam, paymentMethodInput, paymentMethodPatch,
@@ -16,6 +16,7 @@ const auth = [{ bearerAuth: [] }];
 const user = z.object({ id: uuid, email: z.string().email(), name: z.string(), role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']) }).openapi('User');
 const paymentMethod = paymentMethodInput.extend({ id: uuid, createdAt: dateTime, updatedAt: dateTime }).openapi('PaymentMethod');
 const moduleDto = moduleInput.extend({
+  facultyName: z.string().max(256).describe('Faculty name; empty string for legacy modules awaiting assignment'),
   id: uuid, createdAt: dateTime, updatedAt: dateTime,
   access_status: z.enum(['default', 'full_access', 'pending', 'approved'])
     .describe('Current user access: default = no access; full_access = admin; pending = receipt awaiting approval; approved = granted access or free module'),
@@ -125,7 +126,7 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   },
 });
 
-  secured('get', '/modules', ['Modules'], 'List modules', paginated(moduleDto), { query: z.object({ page: z.string().optional(), pageSize: z.string().optional(), number: z.string().optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
+  secured('get', '/modules', ['Modules'], 'List modules', paginated(moduleDto), { query: z.object({ facultyName: facultyNameInput.optional(), page: z.string().optional(), pageSize: z.string().optional(), number: z.string().optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
   secured('get', '/payment-methods', ['Payment methods'], 'List all payment methods', envelope(z.array(paymentMethod)));
   secured('post', '/payment-methods', ['Payment methods'], 'Create a payment method (admin)', envelope(paymentMethod), { body: { content: { 'application/json': { schema: paymentMethodInput } } } }, 201);
   secured('patch', '/payment-methods/{paymentMethodId}', ['Payment methods'], 'Update a payment method (admin)', envelope(paymentMethod), { params: paymentMethodIdParam, body: { content: { 'application/json': { schema: paymentMethodPatch } } } });
@@ -137,9 +138,10 @@ add({ method: 'delete', path: '/me', tags: ['Authentication'], summary: 'Delete 
   secured('get', '/modules/{moduleId}/lectures', ['Modules'], 'List a module’s lectures', paginated(lectureReadDto), { params: moduleIdParam });
   secured('post', '/modules/{moduleId}/lectures', ['Modules'], 'Create a lecture (admin)', envelope(lectureDto), { params: moduleIdParam, body: { content: { 'application/json': { schema: lectureInput } } } }, 201);
 
-  secured('get', '/academic-years', ['Catalogue'], 'List available academic years', envelope(z.array(z.string())));
-  secured('get', '/semesters', ['Catalogue'], 'List available semesters, optionally for an academic year', envelope(z.array(z.string())), { query: z.object({ academicYear: z.string().optional() }) });
-  secured('get', '/subjects', ['Catalogue'], 'List available lecture subjects', envelope(z.array(z.string())), { query: z.object({ moduleId: uuid.optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
+  secured('get', '/faculties', ['Catalogue'], 'List distinct faculty names alphabetically', paginated(z.string()), { query: paginationQuery });
+  secured('get', '/academic-years', ['Catalogue'], 'List available academic years', envelope(z.array(z.string())), { query: z.object({ facultyName: facultyNameInput.optional() }) });
+  secured('get', '/semesters', ['Catalogue'], 'List available semesters, optionally for an academic year', envelope(z.array(z.string())), { query: z.object({ facultyName: facultyNameInput.optional(), academicYear: z.string().optional() }) });
+  secured('get', '/subjects', ['Catalogue'], 'List available lecture subjects', envelope(z.array(z.string())), { query: z.object({ facultyName: facultyNameInput.optional(), moduleId: uuid.optional(), academicYear: z.string().optional(), semester: z.string().optional() }) });
 
   secured('get', '/lectures', ['Lectures'], 'List lectures', paginated(lectureReadDto.extend({ academicYear: z.string(), semester: z.string() })));
   secured('get', '/lectures/{lectureId}', ['Lectures'], 'Get a lecture', envelope(lectureReadDto), { params: lectureIdParam });

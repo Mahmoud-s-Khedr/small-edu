@@ -3,6 +3,7 @@ import identityMigration from '../drizzle/0001_ordinary_morbius.sql?raw';
 import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
 import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
 import paymentMethodsMigration from '../drizzle/0004_payment_methods.sql?raw';
+import facultyMigration from '../drizzle/0007_module_faculties.sql?raw';
 import deviceMigration from '../drizzle/0006_device_restriction.sql?raw';
 import { releaseDevice } from '../src/lib/devices';
 import nullableVideoMigration from '../drizzle/0005_cloudy_true_believers.sql?raw';
@@ -137,6 +138,14 @@ beforeAll(async () => {
   expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
   await env.DB.batch(deviceMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
   expect(await env.DB.prepare("SELECT enabled FROM app_settings WHERE key = 'DEVICE_RESTRICTION_ENABLED'").first()).toEqual({ enabled: 0 });
+  const moduleBeforeFaculty = await env.DB.prepare('SELECT * FROM modules WHERE id = ?').bind(moduleId).first();
+  const childrenBeforeFaculty = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
+  await env.DB.batch(facultyMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  expect(await env.DB.prepare('SELECT * FROM modules WHERE id = ?').bind(moduleId).first())
+    .toEqual({ ...moduleBeforeFaculty, faculty_name: '' });
+  const childrenAfterFaculty = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
+  expect(childrenAfterFaculty.map((result) => result.results)).toEqual(childrenBeforeFaculty.map((result) => result.results));
+  expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
 
 });
 
@@ -218,6 +227,7 @@ describe('Medly API', () => {
     expect(spec.status).toBe(200);
     const document = await spec.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
     expect(document.paths).toHaveProperty('/modules');
+    expect(document.paths).toHaveProperty('/faculties');
     expect(document.paths).toHaveProperty('/academic-years');
     expect(document.paths).toHaveProperty('/semesters');
     expect(document.paths).toHaveProperty('/subjects');
@@ -406,7 +416,7 @@ describe('Medly API', () => {
   });
 
   it('performs admin module CRUD and restricts regular users', async () => {
-    const payload = { title: 'Cardiology', number: '101', academicYear: '2026', semester: 'Fall', priceCents: 4900 };
+    const payload = { facultyName: 'Medicine', title: 'Cardiology', number: '101', academicYear: '2026', semester: 'Fall', priceCents: 4900 };
     expect((await json('/api/v1/modules', 'POST', payload, userId)).status).toBe(403);
     const created = await json('/api/v1/modules', 'POST', payload);
     expect(created.status).toBe(201);
@@ -414,6 +424,99 @@ describe('Medly API', () => {
     expect((await request(`/api/v1/modules/${module.id}`, { headers: auth(userId) })).status).toBe(200);
     expect((await json(`/api/v1/modules/${module.id}`, 'PATCH', { title: 'Advanced Cardiology' })).status).toBe(200);
     expect((await request(`/api/v1/modules/${module.id}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
+  });
+
+  it('validates faculty names and enforces module uniqueness within each faculty on create and update', async () => {
+    const payload = { title: 'Anatomy', facultyName: ' Medicine ', number: '101', academicYear: '2026', semester: 'Fall', priceCents: 0 };
+    for (const facultyName of [undefined, null, '', '   ', 'a'.repeat(257)]) {
+      expect((await json('/api/v1/modules', 'POST', { ...payload, facultyName })).status).toBe(422);
+    }
+    const first = await json('/api/v1/modules', 'POST', payload);
+    expect(first.status).toBe(201);
+    const { data: module } = await first.json<{ data: { id: string; facultyName: string } }>();
+    expect(module.facultyName).toBe('Medicine');
+    const duplicate = await json('/api/v1/modules', 'POST', { ...payload, title: 'Another title' });
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({ error: { code: 'CONFLICT' } });
+    const other = await json('/api/v1/modules', 'POST', { ...payload, facultyName: 'Dentistry' });
+    expect(other.status).toBe(201);
+    const { data: second } = await other.json<{ data: { id: string } }>();
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: 'Medicine' })).status).toBe(409);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: '   ' })).status).toBe(422);
+    const unchanged = await request(`/api/v1/modules/${second.id}`, { headers: auth(userId) });
+    expect(await unchanged.json()).toMatchObject({ data: { facultyName: 'Dentistry' } });
+    expect((await json('/api/v1/modules', 'POST', { ...payload, number: '102' })).status).toBe(201);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: 'Medicine', number: '102' })).status).toBe(409);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: ' Pharmacy ' })).status).toBe(200);
+    expect(await (await request(`/api/v1/modules/${second.id}`, { headers: auth(userId) })).json())
+      .toMatchObject({ data: { facultyName: 'Pharmacy' } });
+    const longName = 'a'.repeat(256);
+    expect((await json('/api/v1/modules', 'POST', { ...payload, facultyName: ` ${longName} ` })).status).toBe(201);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: longName })).status).toBe(409);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: longName, number: '103' })).status).toBe(200);
+    expect((await json(`/api/v1/modules/${second.id}`, 'PATCH', { facultyName: 'a'.repeat(257) })).status).toBe(422);
+    for (const path of ['/modules', '/academic-years', '/semesters', '/subjects']) {
+      expect((await request(`/api/v1${path}?facultyName=${longName}`, { headers: auth(userId) })).status).toBe(200);
+      expect((await request(`/api/v1${path}?facultyName=${longName}a`, { headers: auth(userId) })).status).toBe(422);
+    }
+
+  });
+
+  it('paginates distinct faculties alphabetically and excludes unassigned legacy modules', async () => {
+    expect((await request('/api/v1/faculties')).status).toBe(401);
+    const list = async (query = '') => {
+      const response = await request(`/api/v1/faculties${query}`, { headers: auth(userId) });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    expect(await list()).toEqual({ data: [], meta: { page: 1, pageSize: 20, limit: 20, offset: 0, total: 0 } });
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO modules (id, title, number, academic_year, semester, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(moduleId, 'Legacy module', '0', '2026', 'Fall', now, now).run();
+    for (const [index, facultyName] of ['Medicine', 'Dentistry', 'Medicine', 'Pharmacy'].entries()) {
+      expect((await json('/api/v1/modules', 'POST', { title: 'Course', facultyName, number: String(index + 1), academicYear: '2026', semester: 'Fall', priceCents: 0 })).status).toBe(201);
+    }
+    expect(await list()).toMatchObject({ data: ['Dentistry', 'Medicine', 'Pharmacy'], meta: { total: 3 } });
+    expect(await list('?page=2&pageSize=1')).toEqual({ data: ['Medicine'], meta: { page: 2, pageSize: 1, limit: 1, offset: 1, total: 3 } });
+    expect(await list('?page=3&pageSize=1')).toMatchObject({ data: ['Pharmacy'], meta: { total: 3 } });
+    expect(await list('?page=4&pageSize=1')).toMatchObject({ data: [], meta: { total: 3 } });
+    for (const query of ['page=0', 'page=1.5', 'page=abc', 'pageSize=0', 'pageSize=51']) {
+      expect((await request(`/api/v1/faculties?${query}`, { headers: auth(userId) })).status).toBe(422);
+    }
+    expect((await json(`/api/v1/modules/${moduleId}`, 'PATCH', { facultyName: 'Engineering' })).status).toBe(200);
+    expect(await list()).toMatchObject({ data: ['Dentistry', 'Engineering', 'Medicine', 'Pharmacy'], meta: { total: 4 } });
+    expect((await request(`/api/v1/modules/${moduleId}`, { method: 'DELETE', headers: auth(adminId) })).status).toBe(204);
+    expect(await list()).toMatchObject({ data: ['Dentistry', 'Medicine', 'Pharmacy'], meta: { total: 3 } });
+  });
+
+  it('combines faculty filters with module and catalogue filters', async () => {
+    const created = [];
+    for (const item of [
+      { facultyName: 'Medicine', academicYear: '2026', semester: 'Spring', subject: 'Anatomy' },
+      { facultyName: 'Medicine', academicYear: '2025', semester: 'Fall', subject: 'Physiology' },
+      { facultyName: 'Dentistry', academicYear: '2024', semester: 'Winter', subject: 'Dentistry' },
+    ]) {
+      const response = await json('/api/v1/modules', 'POST', { ...item, title: 'Course', number: '101', priceCents: 0 });
+      expect(response.status).toBe(201);
+      const { data: module } = await response.json<{ data: { id: string } }>();
+      created.push(module);
+      const lecture = await json(`/api/v1/modules/${module.id}/lectures`, 'POST', { title: 'Lecture', subject: item.subject, lectureDate: new Date().toISOString() });
+      expect(lecture.status).toBe(201);
+      expect(await lecture.json()).toMatchObject({ data: { module: { facultyName: item.facultyName } } });
+    }
+    const get = async (path: string) => (await request(`/api/v1${path}`, { headers: auth(userId) })).json();
+    expect(await get('/modules?facultyName=Medicine&pageSize=1')).toMatchObject({ data: [expect.objectContaining({ facultyName: 'Medicine' })], meta: { total: 2 } });
+    expect(await get('/modules?facultyName=%20Medicine%20&academicYear=2026&semester=Spring&number=101'))
+      .toMatchObject({ data: [{ id: created[0]!.id, facultyName: 'Medicine' }], meta: { total: 1 } });
+    expect(await get('/modules?facultyName=Unknown')).toMatchObject({ data: [], meta: { total: 0 } });
+    expect(await get('/academic-years?facultyName=Medicine')).toEqual({ data: ['2026', '2025'] });
+    expect(await get('/semesters?facultyName=Medicine&academicYear=2026')).toEqual({ data: ['Spring'] });
+    expect(await get('/subjects?facultyName=Medicine')).toEqual({ data: ['Anatomy', 'Physiology'] });
+    expect(await get('/subjects?facultyName=Medicine&academicYear=2025&semester=Fall')).toEqual({ data: ['Physiology'] });
+    expect(await get(`/subjects?facultyName=Dentistry&moduleId=${created[0]!.id}`)).toEqual({ data: [] });
+    for (const path of ['/modules', '/academic-years', '/semesters', '/subjects']) {
+      expect((await request(`/api/v1${path}?facultyName=%20`, { headers: auth(userId) })).status).toBe(422);
+    }
   });
 
   it('lists distinct academic years, semesters, and subjects for catalogue filters', async () => {
@@ -504,12 +607,12 @@ describe('Medly API', () => {
     expect((await json(`/api/v1/admin/users/${secondUserId}/role`, 'PATCH', { role: 'SUPER_ADMIN' }, superAdminId)).status).toBe(422);
     expect((await json(`/api/v1/admin/users/${superAdminId}/role`, 'PATCH', { role: 'USER' }, superAdminId)).status).toBe(409);
 
-    const module = { title: 'Super-admin course', number: '901', academicYear: '2026', semester: 'Fall', priceCents: 0 };
+    const module = { facultyName: 'Medicine', title: 'Super-admin course', number: '901', academicYear: '2026', semester: 'Fall', priceCents: 0 };
     expect((await json('/api/v1/modules', 'POST', module, superAdminId)).status).toBe(201);
   });
 
   it.each([{}, { videoUrl: null }])('allows creating a lecture without a video: %j', async (video) => {
-    await json('/api/v1/modules', 'POST', { title: 'Optional videos', number: '1', academicYear: '2026', semester: 'Fall', priceCents: 0 });
+    await json('/api/v1/modules', 'POST', { facultyName: 'Medicine', title: 'Optional videos', number: '1', academicYear: '2026', semester: 'Fall', priceCents: 0 });
     const module = await env.DB.prepare('SELECT id FROM modules LIMIT 1').first<{ id: string }>();
     const created = await json(`/api/v1/modules/${module!.id}/lectures`, 'POST', {
       title: 'No video', description: 'Keep this description', subject: 'Subject', lectureDate: new Date().toISOString(), ...video,
@@ -675,7 +778,7 @@ describe('Medly API', () => {
 
   it('includes full_access when admins create or update modules', async () => {
     const created = await json('/api/v1/modules', 'POST', {
-      title: 'Admin module', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 100,
+      facultyName: 'Medicine', title: 'Admin module', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 100,
     });
     expect(created.status).toBe(201);
     const body = await created.json() as { data: { id: string; access_status: string } };
@@ -711,7 +814,7 @@ describe('Medly API', () => {
     expect(result.data[1]!.user).toEqual({ id: userId, name: 'Student', email: 'student@example.test', role: 'USER' });
     expect(result.data[0]!.user).toEqual({ id: secondUserId, name: 'Other Student', email: 'other@example.test', role: 'USER' });
     expect(result.data[1]!.module).toEqual({
-      id: moduleId, title: 'Physiology', number: '2', academicYear: '2026', semester: 'Fall', priceCents: 100,
+      id: moduleId, facultyName: '', title: 'Physiology', number: '2', academicYear: '2026', semester: 'Fall', priceCents: 100,
       createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(), access_status: 'full_access',
     });
     expect(result.data[0]!.module).toMatchObject({ id: otherModuleId, title: 'Anatomy', priceCents: 200 });
@@ -1120,7 +1223,7 @@ describe('Medly API', () => {
 
     const token = await firebaseToken({ email: 'promote@example.test' });
     await request('/api/v1/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    const payload = { title: 'Firebase role test', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 0 };
+    const payload = { facultyName: 'Medicine', title: 'Firebase role test', number: '9', academicYear: '2026', semester: 'Fall', priceCents: 0 };
     expect((await request('/api/v1/modules', {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })).status).toBe(403);

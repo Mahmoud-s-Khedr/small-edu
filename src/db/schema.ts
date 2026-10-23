@@ -51,12 +51,13 @@ export const modules = sqliteTable('modules', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   number: text('number').notNull(),
+  facultyName: text('faculty_name').notNull().default(''),
   academicYear: text('academic_year').notNull(),
   semester: text('semester').notNull(),
   priceCents: integer('price_cents').notNull().default(0),
   ...timestamps,
 }, (table) => [
-  uniqueIndex('modules_year_semester_number_unique').on(table.academicYear, table.semester, table.number),
+  uniqueIndex('modules_faculty_year_semester_number_unique').on(table.facultyName, table.academicYear, table.semester, table.number),
   index('modules_filter_idx').on(table.academicYear, table.semester, table.number),
   check('modules_price_nonnegative', sql`${table.priceCents} >= 0`),
 ]);

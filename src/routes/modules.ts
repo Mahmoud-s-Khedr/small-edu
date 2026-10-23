@@ -3,15 +3,16 @@ import { ApiRouter } from '../openapi';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { flashcards, lectureMaterials, lectures, modules } from '../db/schema';
-import { notFound } from '../lib/errors';
+import { conflict, notFound } from '../lib/errors';
 import { pagination, paginationQuery } from '../lib/pagination';
-import { lectureInput, lecturePatch, moduleIdParam, moduleInput, modulePatch } from '../lib/validation';
+import { facultyNameInput, lectureInput, lecturePatch, moduleIdParam, moduleInput, modulePatch } from '../lib/validation';
 import { withModuleAccessStatus } from '../lib/access';
 import { deletePrivateObjects } from '../lib/storage';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import type { AppBindings } from '../types';
 
 const moduleFilters = paginationQuery.extend({
+  facultyName: facultyNameInput.optional(),
   number: z.string().min(1).optional(),
   academicYear: z.string().min(1).optional(),
   semester: z.string().min(1).optional(),
@@ -22,12 +23,21 @@ const lectureFilters = paginationQuery.extend({
   to: z.coerce.date().optional(),
 });
 
+function handleWriteError(error: unknown): never {
+  // Drizzle wraps D1 constraint errors in the cause. Let the database enforce uniqueness atomically.
+  if (error instanceof Error && /UNIQUE constraint failed: modules\.faculty_name, modules\.academic_year, modules\.semester, modules\.number/.test(
+    `${error.message} ${error.cause instanceof Error ? error.cause.message : ''}`,
+  )) throw conflict('A module with this faculty, academic year, semester, and number already exists');
+  throw error;
+}
+
 export const moduleRoutes = new ApiRouter<AppBindings>('/modules');
 moduleRoutes.use('*', requireAuth);
 
 moduleRoutes.get('/', async (c) => {
   const query = moduleFilters.parse(c.req.query());
   const filters: SQL[] = [];
+  if (query.facultyName) filters.push(eq(modules.facultyName, query.facultyName));
   if (query.number) filters.push(eq(modules.number, query.number));
   if (query.academicYear) filters.push(eq(modules.academicYear, query.academicYear));
   if (query.semester) filters.push(eq(modules.semester, query.semester));
@@ -45,7 +55,11 @@ moduleRoutes.post('/', requireAdmin, async (c) => {
   const input = moduleInput.parse(await c.req.json());
   const now = new Date();
   const item = { id: crypto.randomUUID(), ...input, createdAt: now, updatedAt: now };
-  await db(c.env.DB).insert(modules).values(item);
+  try {
+    await db(c.env.DB).insert(modules).values(item);
+  } catch (error) {
+    handleWriteError(error);
+  }
   const [module] = await withModuleAccessStatus(c.env, c.get('user'), [item]);
   return c.json({ data: module }, 201);
 });
@@ -64,7 +78,11 @@ moduleRoutes.patch('/:moduleId', requireAdmin, async (c) => {
   const database = db(c.env.DB);
   const existing = await database.query.modules.findFirst({ where: eq(modules.id, moduleId) });
   if (!existing) throw notFound('Module not found');
-  await database.update(modules).set({ ...input, updatedAt: new Date() }).where(eq(modules.id, moduleId));
+  try {
+    await database.update(modules).set({ ...input, updatedAt: new Date() }).where(eq(modules.id, moduleId));
+  } catch (error) {
+    handleWriteError(error);
+  }
   const [module] = await withModuleAccessStatus(c.env, c.get('user'), [{ ...existing, ...input, updatedAt: new Date() }]);
   return c.json({ data: module });
 });

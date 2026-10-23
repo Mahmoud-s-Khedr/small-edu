@@ -93,6 +93,7 @@ type Module = {
   id: string;
   title: string;
   number: string;
+  facultyName: string; // empty only for legacy modules awaiting assignment
   academicYear: string;
   semester: string;
   priceCents: number;
@@ -148,11 +149,23 @@ type Upload = {
 ## Catalogue filters
 
 These endpoints return distinct strings already represented by modules and
-lectures. They are read-only and are not paginated.
+lectures. They are read-only. `/faculties` is paginated; the other catalogue
+endpoints return unpaginated lists.
+
+### `GET /faculties`
+
+Returns distinct nonempty faculty names alphabetically. Requires authentication.
+Faculty names are derived from modules; there is no separate faculty resource.
+
+```ts
+type Query = { page?: number; pageSize?: number }; // defaults: 1, 20; max pageSize: 50
+type Response = Paginated<string>; // meta.total counts distinct faculties
+```
 
 ### `GET /academic-years`
 
 Returns academic years with at least one module, newest string first.
+Accepts optional `facultyName` (exact match after trimming).
 
 ```ts
 // 200
@@ -161,11 +174,10 @@ type Response = Success<string[]>;
 
 ### `GET /semesters`
 
-Optionally pass `academicYear` to return only the semester labels for that
-year.
+Optionally pass `facultyName` and/or `academicYear` to restrict semester labels.
 
 ```ts
-type Query = { academicYear?: string };
+type Query = { facultyName?: string; academicYear?: string };
 type Response = Success<string[]>;
 ```
 
@@ -177,6 +189,7 @@ year/semester, or module-level picker.
 ```ts
 type Query = {
   moduleId?: string;
+  facultyName?: string; // exact match after trimming
   academicYear?: string;
   semester?: string;
 };
@@ -263,6 +276,13 @@ type Response = Success<User>;
 
 ## Modules
 
+`facultyName` is required on creation (trimmed, 1–256 characters). Faculty names
+use exact, case-sensitive matching. The combination of `facultyName`,
+`academicYear`, `semester`, and `number` must be unique; duplicates return
+`409 CONFLICT` on create or update. Existing modules retain an empty faculty
+name until assigned by an admin; these names are excluded from `/faculties`.
+Patches may omit the faculty name but cannot supply an empty value.
+
 ### `GET /modules`
 
 Lists modules.
@@ -272,6 +292,7 @@ type Query = {
   page?: number;
   pageSize?: number;
   number?: string;
+  facultyName?: string; // exact match after trimming
   academicYear?: string;
   semester?: string;
 };
@@ -286,6 +307,7 @@ type Response = Paginated<Module>;
 type Body = {
   title: string;        // 1–200 characters
   number: string;       // 1–50 characters
+  facultyName: string;  // trimmed, 1–256 characters; required
   academicYear: string; // 1–30 characters
   semester: string;     // 1–30 characters
   priceCents: number;   // non-negative integer
@@ -313,6 +335,7 @@ type Path = { moduleId: string };
 type Body = Partial<{
   title: string;
   number: string;
+  facultyName: string; // trimmed, 1–256 characters
   academicYear: string;
   semester: string;
   priceCents: number;

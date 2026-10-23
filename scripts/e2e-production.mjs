@@ -207,8 +207,8 @@ async function run() {
       const malformed = await request(`device-invalid-${role}`, actors[role], 'POST', '/auth/session', { headers: { 'X-Device-ID': '' } });
       expect(`device header requirement: ${role}`, malformed, restricted ? 422 : 200);
     }
-    expect('student cannot create a module', await request('student-create-module', actors.student, 'POST', '/modules', { json: { title: 'Denied', number: 'DENIED', academicYear: '2026', semester: 'E2E', priceCents: 0 } }), 403);
-    const mainModule = expect('admin creates primary module', await request('create-main-module', actors.admin, 'POST', '/modules', { json: { title: `Medly E2E ${state.runId}`, number: `E2E-${state.runId.slice(-8)}`, academicYear: '2026', semester: 'E2E', priceCents: 1250 } }), 201);
+    expect('student cannot create a module', await request('student-create-module', actors.student, 'POST', '/modules', { json: { title: 'Denied', number: 'DENIED', facultyName: 'E2E Faculty', academicYear: '2026', semester: 'E2E', priceCents: 0 } }), 403);
+    const mainModule = expect('admin creates primary module', await request('create-main-module', actors.admin, 'POST', '/modules', { json: { title: `Medly E2E ${state.runId}`, number: `E2E-${state.runId.slice(-8)}`, facultyName: 'E2E Faculty', academicYear: '2026', semester: 'E2E', priceCents: 1250 } }), 201);
     ids.mainModule = mainModule.id; cleanupNeeded = true;
     expect('list modules with filters', await request('list-modules-filtered', actors.student, 'GET', `/modules?page=1&pageSize=1&number=${encodeURIComponent(mainModule.number)}&academicYear=2026&semester=E2E`), 200);
     expect('get module', await request('get-main-module', actors.student, 'GET', `/modules/${ids.mainModule}`), 200);
@@ -280,7 +280,7 @@ async function run() {
     const accepted = expect('admin accepts booking', await request('accept-booking', actors.admin, 'PATCH', `/admin/bookings/${ids.booking}`, { json: { status: 'ACCEPTED' } }), 200);
     check('booking is accepted', accepted.status === 'ACCEPTED', accepted);
     expect('student retrieves unlocked video', await request('student-unlocked-video', actors.student, 'GET', `/lectures/${ids.lecture}/video`), 200);
-    const rejectedModule = expect('admin creates rejection module', await request('create-rejected-module', actors.admin, 'POST', '/modules', { json: { title: `Rejected E2E ${state.runId}`, number: `REJ-${state.runId.slice(-8)}`, academicYear: '2026', semester: 'E2E', priceCents: 500 } }), 201);
+    const rejectedModule = expect('admin creates rejection module', await request('create-rejected-module', actors.admin, 'POST', '/modules', { json: { title: `Rejected E2E ${state.runId}`, number: `REJ-${state.runId.slice(-8)}`, facultyName: 'E2E Faculty', academicYear: '2026', semester: 'E2E', priceCents: 500 } }), 201);
     ids.rejectedModule = rejectedModule.id;
     const rejectedReceipt = await directUpload('student uploads rejection receipt', actors.student, 'payment-receipt', assets.receipt);
     const rejectedBooking = expect('student creates rejection booking', await request('create-rejection-booking', actors.student, 'POST', '/bookings', { json: { moduleId: ids.rejectedModule, receiptKey: rejectedReceipt.objectKey } }), 201);

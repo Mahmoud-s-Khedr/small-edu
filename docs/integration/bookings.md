@@ -9,6 +9,7 @@ type Module = {
   id: string;
   title: string;
   number: string;
+  facultyName: string; // empty only for legacy modules awaiting assignment
   academicYear: string;
   semester: string;
   priceCents: number;

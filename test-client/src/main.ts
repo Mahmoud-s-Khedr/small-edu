@@ -102,9 +102,11 @@ const presets: Preset[] = [
   { group: 'System and identity', label: 'Current user', method: 'GET', path: '/me', saveIdAs: 'userId' },
   { group: 'System and identity', label: 'List users', method: 'GET', path: '/admin/users', query: [page(), { ...pageSize(), help: '1–50; defaults to 20.' }], saveIdAs: 'userId' },
   { group: 'Super-admin users', label: 'Change user role', method: 'PATCH', path: '/admin/users/:userId/role', params: [userId()], body: [{ name: 'role', label: 'New role', type: 'select', required: true, options: [['ADMIN', 'Admin'], ['USER', 'User']] }] },
-  { group: 'Modules', label: 'List modules', method: 'GET', path: '/modules', query: [page(), pageSize(), { name: 'number', label: 'Module number', placeholder: 'e.g. BIO-101' }, { name: 'academicYear', label: 'Academic year', placeholder: 'e.g. 2026' }, { name: 'semester', label: 'Semester', placeholder: 'e.g. Fall' }], saveIdAs: 'moduleId' },
+  { group: 'Modules', label: 'List faculties', method: 'GET', path: '/faculties', query: [page(), pageSize()] },
+  { group: 'Modules', label: 'List modules', method: 'GET', path: '/modules', query: [page(), pageSize(), { name: 'facultyName', label: 'Faculty name' }, { name: 'number', label: 'Module number', placeholder: 'e.g. BIO-101' }, { name: 'academicYear', label: 'Academic year', placeholder: 'e.g. 2026' }, { name: 'semester', label: 'Semester', placeholder: 'e.g. Fall' }], saveIdAs: 'moduleId' },
   { group: 'Modules', label: 'Create module', method: 'POST', path: '/modules', saveIdAs: 'moduleId', body: [
     { name: 'title', label: 'Title', required: true, placeholder: 'API test module' },
+    { name: 'facultyName', label: 'Faculty name', required: true, placeholder: 'Faculty of Medicine' },
     { name: 'number', label: 'Module number', required: true, placeholder: 'TEST-101' },
     { name: 'academicYear', label: 'Academic year', required: true, placeholder: '2026' },
     { name: 'semester', label: 'Semester', required: true, placeholder: 'Fall' },
@@ -112,6 +114,7 @@ const presets: Preset[] = [
   ] },
   { group: 'Modules', label: 'Get module', method: 'GET', path: '/modules/:moduleId', params: [moduleId()], saveIdAs: 'moduleId' },
   { group: 'Modules', label: 'Update module', method: 'PATCH', path: '/modules/:moduleId', params: [moduleId()], body: [
+    { name: 'facultyName', label: 'Faculty name' },
     { name: 'title', label: 'Title', placeholder: 'Leave blank to keep unchanged' }, { name: 'number', label: 'Module number' },
     { name: 'academicYear', label: 'Academic year' }, { name: 'semester', label: 'Semester' }, { name: 'priceCents', label: 'Price (cents)', type: 'number' },
   ] },

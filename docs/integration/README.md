@@ -8,6 +8,7 @@ you are implementing.
 | --- | --- |
 | [authentication-and-users.md](authentication-and-users.md) | Firebase sign-in, local session provisioning, current user, and super-admin user roles |
 | [device-registration-update.md](device-registration-update.md) | Database flag, student device registration, admin exemption, logout, and resets |
+| [module-faculties-update.md](module-faculties-update.md) | Faculty picker, faculty-aware catalogue filters, admin form changes, and legacy modules |
 | [modules-and-lectures.md](modules-and-lectures.md) | Module and lecture catalogues, video access, materials, and direct material uploads |
 | [bookings.md](bookings.md) | Payment-receipt direct uploads, booking requests, and admin decisions |
 | [payment-methods.md](payment-methods.md) | Manual-transfer instructions and admin CRUD |

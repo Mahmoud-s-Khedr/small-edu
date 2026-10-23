@@ -10,6 +10,7 @@ type Module = {
   id: string;
   title: string;
   number: string;
+  facultyName: string; // empty only for legacy modules awaiting assignment
   academicYear: string;
   semester: string;
   priceCents: number;
@@ -45,24 +46,52 @@ type Material = {
 ## Catalogue filters
 
 These read-only endpoints return unique strings already in use by modules and
-lectures. They require a Firebase bearer token and return `Success<string[]>`.
+lectures. They require a Firebase bearer token. `/faculties` returns
+`Paginated<string>`; the other catalogue endpoints return `Success<string[]>`.
+
+### `GET /faculties?page=1&pageSize=20`
+
+Returns distinct nonempty faculty names alphabetically. Pagination defaults to
+page 1 and 20 items per page; `pageSize` must be between 1 and 50. `meta.total`
+counts distinct faculties, not modules. Faculties are derived from modules:
+creating or renaming a module can add a faculty, and removing the last module
+for a faculty removes that name from the list.
+
+```json
+{
+  "data": ["Faculty of Dentistry", "Faculty of Medicine"],
+  "meta": { "page": 1, "pageSize": 20, "limit": 20, "offset": 0, "total": 2 }
+}
+```
 
 ### `GET /academic-years`
 
 Returns the academic years with at least one module, newest string first.
+Accepts optional `facultyName` to limit years to that faculty.
 
 ### `GET /semesters?academicYear=<year>`
 
 Returns the distinct semester labels for modules in the selected academic year.
-The `academicYear` query parameter is optional when a client needs every label.
+Both `academicYear` and `facultyName` are optional and can be combined.
 
 ### `GET /subjects`
 
 Returns distinct lecture subjects. It accepts optional `moduleId` (UUID),
-`academicYear`, and `semester` filters, which can be combined. For a module's
+`facultyName`, `academicYear`, and `semester` filters, which can be combined. For a module's
 subject picker, use `GET /subjects?moduleId=<moduleId>`.
 
 ## Modules
+
+Each new module requires `facultyName` (trimmed, 1–256 characters). Faculty names
+use exact, case-sensitive matching; use consistent spelling and capitalization.
+The combination `facultyName + academicYear + semester + number` must be unique.
+Duplicate creates or updates return `409 CONFLICT`.
+
+Existing modules retain an empty `facultyName` after migration until an admin
+assigns it using `PATCH /modules/:moduleId`. They remain accessible, but empty
+names do not appear in `/faculties`. A patch can omit `facultyName`; supplying
+an empty name is rejected. All module responses, including nested modules in
+lectures and bookings, include `facultyName`.
 
 Every returned module, including the `module` nested in lecture responses,
 includes `access_status` for the authenticated user:
@@ -89,6 +118,7 @@ type Query = {
   page?: number;
   pageSize?: number;
   number?: string;
+  facultyName?: string; // exact match after trimming
   academicYear?: string;
   semester?: string;
 };
@@ -106,6 +136,7 @@ type Query = {
 type Body = {
   title: string;        // trimmed, 1–200 characters
   number: string;       // trimmed, 1–50 characters
+  facultyName: string;  // trimmed, 1–256 characters; required
   academicYear: string; // trimmed, 1–30 characters
   semester: string;     // trimmed, 1–30 characters
   priceCents: number;   // non-negative integer
