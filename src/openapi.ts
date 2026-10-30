@@ -24,7 +24,8 @@ const moduleDto = moduleInput.extend({
 const lectureDto = lectureInput.extend({ videoUrl: z.string().url().nullable(), id: uuid, moduleId: uuid, module: moduleDto, createdAt: dateTime, updatedAt: dateTime, videoLocked: z.boolean().optional() }).openapi('Lecture');
 const lectureReadDto = lectureDto.extend({ videoUrl: z.string().url().nullable(), videoLocked: z.boolean(), module: moduleDto });
 const material = z.object({ id: uuid, lectureId: uuid, originalFilename: z.string(), contentType: z.string(), sizeBytes: z.number().int(), createdAt: dateTime, updatedAt: dateTime, downloadUrl: z.string().url() }).openapi('Material');
-const booking = z.object({ id: uuid, userId: uuid.nullable(), moduleId: uuid, user: user.nullable(), module: moduleDto, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
+const deletedBookingUser = z.object({ id: z.null(), name: z.literal('Deleted user'), email: z.null(), role: z.null() });
+const booking = z.object({ id: uuid, userId: uuid.nullable(), payerName: z.string().nullable(), payerEmail: z.string().nullable(), moduleId: uuid, user: z.union([user, deletedBookingUser]), module: moduleDto, receiptFilename: z.string(), receiptContentType: z.string(), receiptSizeBytes: z.number().int(), status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']), createdAt: dateTime, updatedAt: dateTime }).openapi('Booking');
 const adminBooking = booking.extend({
   receiptDownloadUrl: z.string().url(),
 }).openapi('AdminBooking');

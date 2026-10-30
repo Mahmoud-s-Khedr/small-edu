@@ -57,6 +57,13 @@
       "when": 1792721903691,
       "tag": "0007_module_faculties",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793363844742,
+      "tag": "0008_harsh_hawkeye",
+      "breakpoints": true
     }
   ]
 }

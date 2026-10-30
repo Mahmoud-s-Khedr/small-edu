@@ -4,6 +4,7 @@ import deletionMigration from '../drizzle/0002_account_deletion.sql?raw';
 import uploadsMigration from '../drizzle/0003_unique_kid_colt.sql?raw';
 import paymentMethodsMigration from '../drizzle/0004_payment_methods.sql?raw';
 import facultyMigration from '../drizzle/0007_module_faculties.sql?raw';
+import payerMigration from '../drizzle/0008_harsh_hawkeye.sql?raw';
 import deviceMigration from '../drizzle/0006_device_restriction.sql?raw';
 import { releaseDevice } from '../src/lib/devices';
 import nullableVideoMigration from '../drizzle/0005_cloudy_true_believers.sql?raw';
@@ -146,6 +147,20 @@ beforeAll(async () => {
   const childrenAfterFaculty = await env.DB.batch(preservedTables.map((table) => env.DB.prepare(`SELECT * FROM ${table}`)));
   expect(childrenAfterFaculty.map((result) => result.results)).toEqual(childrenBeforeFaculty.map((result) => result.results));
   expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+  await env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind('migration-linked', secondUserId, moduleId, 'migration-linked', 'receipt', 'application/pdf', 1, migrationTime, migrationTime).run();
+  await env.DB.batch(payerMigration.split('--> statement-breakpoint').map((statement) => env.DB.prepare(statement)));
+  expect(await env.DB.prepare('SELECT payer_name, payer_email FROM booking_requests WHERE id = ?').bind('migration-linked').first())
+    .toEqual({ payer_name: 'Other Student', payer_email: 'other@example.test' });
+  expect(await env.DB.prepare('SELECT payer_name, payer_email FROM booking_requests WHERE id = ?').bind('migration-booking').first())
+    .toEqual({ payer_name: null, payer_email: null });
+  // The previous Worker can still insert bookings after the migration runs.
+  await env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind('old-worker-booking', secondUserId, moduleId, 'old-worker-booking', 'receipt', 'application/pdf', 1, 'REJECTED', migrationTime, migrationTime).run();
+  await env.DB.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').bind('Updated', 'updated@example.test', secondUserId).run();
+  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(secondUserId).run();
+  expect(await env.DB.prepare('SELECT user_id, payer_name, payer_email FROM booking_requests WHERE id = ?').bind('old-worker-booking').first())
+    .toEqual({ user_id: null, payer_name: 'Other Student', payer_email: 'other@example.test' });
 
 });
 
@@ -309,7 +324,6 @@ describe('Medly API', () => {
   it('preserves receipts and bookings, removes personal progress, and permits fresh signup with the same email', async () => {
     const now = Date.now();
     const cardId = '55555555-5555-4555-8555-555555555555';
-    const bookingId = '66666666-6666-4666-8666-666666666666';
     const key = `payment-receipts/${userId}/retained.pdf`;
     const abandonedKey = `payment-receipts/${userId}/unsubmitted.pdf`;
     await env.STORAGE.put(key, 'retained receipt');
@@ -324,9 +338,11 @@ describe('Medly API', () => {
       env.DB.prepare('INSERT INTO user_flashcard_state (user_id, flashcard_id, knowledge, updated_at) VALUES (?, ?, ?, ?)')
         .bind(userId, cardId, 'KNOWN', now),
       env.DB.prepare('INSERT INTO module_access (user_id, module_id, granted_at) VALUES (?, ?, ?)').bind(userId, moduleId, now),
-      env.DB.prepare('INSERT INTO booking_requests (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(bookingId, userId, moduleId, key, 'retained.pdf', 'application/pdf', 16, now, now),
     ]);
+    const created = await json('/api/v1/bookings', 'POST', { moduleId, receiptKey: key }, userId);
+    expect(created.status).toBe(201);
+    const { data: { id: bookingId } } = await created.json() as { data: { id: string } };
+    await env.DB.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').bind('Changed Name', 'changed@example.test', userId).run();
     deletionMode = 'success';
     expect((await request('/api/v1/me', { method: 'DELETE', headers: auth(userId) })).status).toBe(202);
     await vi.waitFor(async () => {
@@ -343,7 +359,7 @@ describe('Medly API', () => {
     expect(new URL(receiptDownload.headers.get('Location') ?? '').searchParams.get('X-Amz-Expires')).toBe('600');
     const decision = await json(`/api/v1/admin/bookings/${bookingId}`, 'PATCH', { status: 'ACCEPTED' });
     expect(decision.status).toBe(200);
-    expect(await decision.json()).toMatchObject({ data: { userId: null, user: null, status: 'ACCEPTED' } });
+    expect(await decision.json()).toMatchObject({ data: { userId: null, user: { id: null, name: 'Deleted user', email: null, role: null }, payerName: 'Student', payerEmail: 'student@example.test', status: 'ACCEPTED' } });
     expect(await env.DB.prepare('SELECT * FROM module_access').all()).toMatchObject({ results: [] });
     expect(await env.DB.prepare('SELECT id FROM flashcards WHERE id = ?').bind(cardId).first()).not.toBeNull();
     const freshToken = await firebaseToken({ email: 'student@example.test' }, {}, { subject: 'new-firebase-uid' });
@@ -821,7 +837,7 @@ describe('Medly API', () => {
     await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(secondUserId).run();
     const retained = await list();
     expect(retained.data).toHaveLength(2);
-    expect(retained.data[0]).toMatchObject({ id: bookingIds[1], userId: null, user: null, moduleId: otherModuleId, module: { id: otherModuleId } });
+    expect(retained.data[0]).toMatchObject({ id: bookingIds[1], userId: null, user: { id: null, name: 'Deleted user', email: null, role: null }, payerName: 'Other Student', payerEmail: 'other@example.test', moduleId: otherModuleId, module: { id: otherModuleId } });
     expect(retained.data[0]!.receiptDownloadUrl).toContain('X-Amz-Signature=');
     expect(retained.data[0]).not.toHaveProperty('receiptKey');
     const studentList = await request('/api/v1/bookings', { headers: auth(userId) });
@@ -860,7 +876,7 @@ describe('Medly API', () => {
     const key = `payment-receipts/${userId}/nested.pdf`;
     await env.STORAGE.put(key, 'receipt', { httpMetadata: { contentType: 'application/pdf' } });
     const booking = await read(await json('/api/v1/bookings', 'POST', { moduleId, receiptKey: key }, userId), 201) as Record<string, unknown>;
-    expect(booking).toMatchObject({ user: { id: userId, name: 'Student' }, module: { id: moduleId, access_status: 'pending' } });
+    expect(booking).toMatchObject({ payerName: 'Student', payerEmail: 'student@example.test', user: { id: userId, name: 'Student' }, module: { id: moduleId, access_status: 'pending' } });
     const decided = await read(await json(`/api/v1/admin/bookings/${booking.id}`, 'PATCH', { status: 'ACCEPTED' }));
     expect(decided).toMatchObject({ user: { id: userId }, module: { id: moduleId, access_status: 'full_access' } });
     const history = await read(await request('/api/v1/bookings', { headers: auth(userId) }));

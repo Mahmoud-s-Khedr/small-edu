@@ -41,7 +41,7 @@ async function bookingResponses(env: Env, actor: AuthUser, rows: Awaited<ReturnT
   return Promise.all(rows.map(async ({ booking, user }, index) => {
     const { receiptKey, ...publicBooking } = booking;
     return {
-      ...publicBooking, user, module: moduleDtos[index]!,
+      ...publicBooking, user: user ?? { id: null, name: 'Deleted user', email: null, role: null }, module: moduleDtos[index]!,
       ...(includeReceipt ? { receiptDownloadUrl: await createPresignedDownload(env, receiptKey, {
         contentType: booking.receiptContentType, filename: booking.receiptFilename,
       }) } : {}),
@@ -66,10 +66,10 @@ bookingRoutes.post('/', async (c) => {
   };
   try {
     const inserted = await c.env.DB.prepare(`INSERT INTO booking_requests
-      (id, user_id, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at)
-      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS
-      (SELECT 1 FROM users WHERE id = ? AND deletion_requested_at IS NULL)`)
-      .bind(item.id, user.id, moduleId, receiptKey, item.receiptFilename, item.receiptContentType,
+      (id, user_id, payer_name, payer_email, module_id, receipt_key, receipt_filename, receipt_content_type, receipt_size_bytes, status, created_at, updated_at)
+      SELECT ?, id, name, email, ?, ?, ?, ?, ?, ?, ?, ? FROM users
+      WHERE id = ? AND deletion_requested_at IS NULL`)
+      .bind(item.id, moduleId, receiptKey, item.receiptFilename, item.receiptContentType,
         item.receiptSizeBytes, item.status, now.getTime(), now.getTime(), user.id).run();
     if (!inserted.meta.changes) throw unauthorized('This account is being deleted');
   } catch (error) {

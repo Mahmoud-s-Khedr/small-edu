@@ -105,6 +105,8 @@ export const uploads = sqliteTable('uploads', {
 export const bookingRequests = sqliteTable('booking_requests', {
   id: text('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+  payerName: text('payer_name'),
+  payerEmail: text('payer_email'),
   moduleId: text('module_id').notNull().references(() => modules.id, { onDelete: 'cascade' }),
   receiptKey: text('receipt_key').notNull().unique(),
   receiptFilename: text('receipt_filename').notNull(),

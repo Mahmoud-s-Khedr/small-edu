@@ -23,7 +23,10 @@ type BookingStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 type Booking = {
   id: string;
   userId: string | null;
-  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
+  payerName: string | null;
+  payerEmail: string | null;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' }
+    | { id: null; name: 'Deleted user'; email: null; role: null };
   moduleId: string;
   module: Module;
   receiptFilename: string;
@@ -165,7 +168,7 @@ type Response = {
 };
 ```
 
-The nested `user` is `null` after account deletion. The nested `module` contains
+After account deletion, `user` is `{ id: null, name: "Deleted user", email: null, role: null }`. `payerName` and `payerEmail` retain the booking-time details, or the details at migration time for existing linked bookings. They are null for bookings whose users were already deleted before the migration. The nested `module` contains
 current module details; `access_status` describes the signed-in admin's access.
 Responses include nested `user` and `module` objects alongside the existing
 `userId` and `moduleId` fields for backward compatibility. Requests and filters
@@ -203,7 +206,7 @@ type Body = { status: 'ACCEPTED' | 'REJECTED' };
 
 **Expected response — `200 OK`:** `Success<Booking>`.
 
-Bookings retained after account deletion have `userId: null` and `user: null`. Their receipts
+Bookings retained after account deletion have `userId: null` and the deleted-user placeholder described above. Their receipts
 remain downloadable; decisions do not grant access when no active user exists.
 
 Only a `PENDING` booking may be decided. A second decision attempt returns

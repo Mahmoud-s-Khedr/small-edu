@@ -127,7 +127,10 @@ type Material = {
 type Booking = {
   id: string;
   userId: string | null;
-  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' } | null;
+  payerName: string | null;
+  payerEmail: string | null;
+  user: { id: string; name: string; email: string; role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' }
+    | { id: null; name: 'Deleted user'; email: null; role: null };
   moduleId: string;
   module: Module;
   receiptFilename: string;
@@ -578,7 +581,7 @@ Accepts no deletion target in the request. Returns `202` with
 `401 REAUTHENTICATION_REQUIRED` requires Firebase reauthentication.
 
 Firebase and local account deletion runs in the background with scheduled retries.
-Bookings survive with `userId: null` and `user: null`; all R2 payment receipts are retained.
+Bookings survive with `userId: null`, a deleted-user placeholder, and retained payer name and email when available; all R2 payment receipts are retained.
 Module access and flashcard progress are removed. A new Firebase UID may register
 using the same email after completion and receives a fresh `USER` account.
 See [account deletion](docs/account-deletion.md) for configuration and retry behavior.
@@ -661,7 +664,7 @@ type Response = {
 };
 ```
 
-The nested `user` is `null` after account deletion. The nested `module` contains
+After account deletion, `user` is `{ id: null, name: "Deleted user", email: null, role: null }`. `payerName` and `payerEmail` preserve the details saved at booking time (or at migration time for older linked bookings). They are null for older bookings whose users were already deleted. The nested `module` contains
 current module details; `access_status` describes the signed-in admin's access.
 Responses include nested `user` and `module` objects alongside the existing
 `userId` and `moduleId` fields for backward compatibility. Requests and filters
